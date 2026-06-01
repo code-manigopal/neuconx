@@ -1,4 +1,4 @@
-# ⬡ MultiMind — Personal AI Platform
+# ⬡ NeuConX — Personal AI Platform
 
 > **Your personal AI. Multiple minds. One truth.**
 > 100% free to run. Locally hosted. Never tracks you.
@@ -10,9 +10,9 @@
 
 ---
 
-## What is MultiMind?
+## What is NeuConX?
 
-MultiMind is a locally-hosted personal AI chat platform that queries **multiple free AI models in parallel**, merges their responses into one clean answer, and remembers context about you across sessions.
+NeuConX is a locally-hosted personal AI chat platform that queries **multiple free AI models in parallel**, merges their responses into one clean answer, and remembers context about you across sessions.
 
 Built for power users who want full control — no subscriptions, no cloud lock-in, no data leaving your machine except the API calls you choose to make.
 
@@ -42,8 +42,8 @@ Built for power users who want full control — no subscriptions, no cloud lock-
 
 ### 2. Clone
 ```bash
-git clone https://github.com/YOUR_USERNAME/multimind.git
-cd multimind
+git clone https://github.com/YOUR_USERNAME/NeuConX.git
+cd NeuConX
 ```
 
 ### 3. Set up API keys
@@ -79,7 +79,7 @@ Open **http://localhost:5050** in your browser.
 
 ## How Smart Routing Works
 
-MultiMind classifies every query before sending it:
+NeuConX classifies every query before sending it:
 
 ```
 Tier 1 — Quick      < 10 words           → 1 model  (Gemini only)
@@ -177,7 +177,7 @@ Your conversations, profile, API keys — all stay on your local disk.
 ## Project Structure
 
 ```
-multimind/
+NeuConX/
 ├── app.py                    # Flask backend — all API routes
 ├── requirements.txt          # Pinned dependencies
 ├── start.bat                 # Windows one-click launcher
@@ -221,7 +221,7 @@ multimind/
 
 ## Golden Rule
 
-> **MultiMind will always be 100% free to run.**
+> **NeuConX will always be 100% free to run.**
 > No paid tier. No subscription. No telemetry. Ever.
 
 ---
