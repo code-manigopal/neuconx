@@ -1,4 +1,4 @@
-# MultiMind — Python Dependencies
+# NeuConX — Python Dependencies
 # SECURITY NOTE (Principal Architect):
 # All versions are pinned to prevent supply chain attacks.
 # Run `pip install -r requirements.txt --break-system-packages` on first launch.

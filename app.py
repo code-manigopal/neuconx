@@ -1,5 +1,5 @@
 """
-MultiMind — Personal AI Platform
+NeuConX — Personal AI Platform
 Principal Security Architect Notes:
 - All inputs sanitized before processing
 - Rate limiting on all endpoints
@@ -41,7 +41,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler('multimind.log'),
+        logging.FileHandler('NeuConX.log'),
         logging.StreamHandler()
     ]
 )
@@ -235,7 +235,7 @@ def call_openrouter(prompt: str, history: list, model_id: str, model_key: str) -
                 'Authorization': f'Bearer {OPENROUTER_API_KEY}',
                 'Content-Type': 'application/json',
                 'HTTP-Referer': 'http://localhost:5050',
-                'X-Title': 'MultiMind'
+                'X-Title': 'NeuConX'
             },
             json={'model': model_id, 'messages': messages, 'max_tokens': 1024},
             timeout=30
@@ -707,7 +707,7 @@ def server_error(e):
 # ── Launch ────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     print("\n╔══════════════════════════════════════╗")
-    print("║         MultiMind is starting...     ║")
+    print("║         NeuConX is starting...     ║")
     print("╠══════════════════════════════════════╣")
     print("║  http://localhost:5050               ║")
     print("╚══════════════════════════════════════╝\n")

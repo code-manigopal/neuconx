@@ -1,10 +1,10 @@
 @echo off
-title MultiMind — AI Platform
+title NeuConX — AI Platform
 color 0A
 
 echo.
 echo  ╔══════════════════════════════════════════╗
-echo  ║          MultiMind AI Platform           ║
+echo  ║          NeuConX AI Platform             ║
 echo  ║       Your Personal AI. Always Free.     ║
 echo  ╚══════════════════════════════════════════╝
 echo.

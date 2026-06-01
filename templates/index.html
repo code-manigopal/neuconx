@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- SECURITY: CSP meta tag as backup (primary is set in HTTP headers via Flask) -->
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
-<title>MultiMind — Personal AI Platform</title>
+<title>NeuConX — Personal AI Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/style.css">
@@ -15,14 +15,14 @@
 <!-- ── Onboarding Overlay ────────────────────────────────────────────────── -->
 <div id="onboarding-overlay" class="overlay {% if onboarding_complete %}hidden{% endif %}">
   <div class="onboarding-card">
-    <div class="onboarding-logo">⬡ MultiMind</div>
+    <div class="onboarding-logo">⬡ NeuConX</div>
     <div id="onboarding-progress" class="progress-bar">
       <div id="onboarding-fill" class="progress-fill" style="width:14%"></div>
     </div>
     <div id="onboarding-step" class="onboarding-step">1 / 7</div>
 
     <div id="onboarding-content">
-      <h2 id="ob-title">Welcome to MultiMind</h2>
+      <h2 id="ob-title">Welcome to NeuConX</h2>
       <p id="ob-subtitle">Before we begin, I need to understand you deeply so every response is personalised to your life and goals. This takes about 3 minutes. You only do this once.</p>
       <div id="ob-question-wrap" class="hidden">
         <label id="ob-question" class="ob-label"></label>
@@ -43,7 +43,7 @@
   <!-- Left Sidebar -->
   <aside class="sidebar">
     <div class="sidebar-header">
-      <div class="logo">⬡ MultiMind</div>
+      <div class="logo">⬡ NeuConX</div>
       <button class="new-chat-btn" onclick="newChat()" title="New Chat">+</button>
     </div>
 
@@ -95,7 +95,7 @@
     <div id="messages" class="messages">
       <div class="welcome-state" id="welcome-state">
         <div class="welcome-logo">⬡</div>
-        <h1 class="welcome-title">MultiMind</h1>
+        <h1 class="welcome-title">NeuConX</h1>
         <p class="welcome-sub">Your personal AI. Multiple minds. One truth.</p>
         <div class="starter-chips">
           <button class="chip" onclick="sendStarter('Explain quantum computing simply')">Explain quantum computing</button>

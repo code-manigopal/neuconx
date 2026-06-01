@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# MultiMind .gitignore
+# NeuConX .gitignore
 # SECURITY: This file prevents secrets and local data from
 #           accidentally being committed to public GitHub repos.
 # ═══════════════════════════════════════════════════════════════
@@ -42,7 +42,7 @@ ENV/
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 logs/
-multimind.log
+NeuConX.log
 
 # ── OS Artifacts ─────────────────────────────────────────────────────────────
 .DS_Store

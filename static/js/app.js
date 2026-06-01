@@ -1,5 +1,5 @@
 /**
- * MultiMind — Frontend Application
+ * NeuConX — Frontend Application
  * 
  * SECURITY NOTES (Principal Architect):
  * 1. CSRF token read from meta tag (not localStorage — XSS resistant)
@@ -175,7 +175,7 @@ function newChat() {
   welcome.className = 'welcome-state';
   welcome.innerHTML = `
     <div class="welcome-logo">⬡</div>
-    <h1 class="welcome-title">MultiMind</h1>
+    <h1 class="welcome-title">NeuConX</h1>
     <p class="welcome-sub">Your personal AI. Multiple minds. One truth.</p>
     <div class="starter-chips">
       <button class="chip" data-prompt="Explain quantum computing simply">Explain quantum computing</button>
@@ -634,7 +634,7 @@ function showOnboardingStep(step) {
   const questionWrap = document.getElementById('ob-question-wrap');
 
   if (step === 0) {
-    setTextContent(document.getElementById('ob-title'), 'Welcome to MultiMind');
+    setTextContent(document.getElementById('ob-title'), 'Welcome to NeuConX');
     setTextContent(document.querySelector('#ob-subtitle') || document.createElement('p'),
       'Before we begin, I need to understand you deeply.');
     questionWrap.classList.add('hidden');
