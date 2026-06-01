@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- SECURITY: CSP meta tag as backup (primary is set in HTTP headers via Flask) -->
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>MultiMind — Personal AI Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<!-- ── Onboarding Overlay ────────────────────────────────────────────────── -->
+<div id="onboarding-overlay" class="overlay {% if onboarding_complete %}hidden{% endif %}">
+  <div class="onboarding-card">
+    <div class="onboarding-logo">⬡ MultiMind</div>
+    <div id="onboarding-progress" class="progress-bar">
+      <div id="onboarding-fill" class="progress-fill" style="width:14%"></div>
+    </div>
+    <div id="onboarding-step" class="onboarding-step">1 / 7</div>
+
+    <div id="onboarding-content">
+      <h2 id="ob-title">Welcome to MultiMind</h2>
+      <p id="ob-subtitle">Before we begin, I need to understand you deeply so every response is personalised to your life and goals. This takes about 3 minutes. You only do this once.</p>
+      <div id="ob-question-wrap" class="hidden">
+        <label id="ob-question" class="ob-label"></label>
+        <textarea id="ob-answer" class="ob-textarea" rows="3" placeholder="Type your answer..."></textarea>
+      </div>
+    </div>
+
+    <div class="onboarding-actions">
+      <button id="ob-back" class="btn-ghost hidden" onclick="onboardingBack()">← Back</button>
+      <button id="ob-next" class="btn-primary" onclick="onboardingNext()">Get Started →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Main App ──────────────────────────────────────────────────────────── -->
+<div id="app" class="app-layout {% if not onboarding_complete %}hidden{% endif %}">
+
+  <!-- Left Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">⬡ MultiMind</div>
+      <button class="new-chat-btn" onclick="newChat()" title="New Chat">+</button>
+    </div>
+
+    <!-- Conversation List -->
+    <div class="sidebar-section">
+      <div class="section-label">Conversations</div>
+      <div id="conv-list" class="conv-list"></div>
+    </div>
+
+    <!-- Skills Panel -->
+    <div class="sidebar-section">
+      <div class="section-label">Skills</div>
+      <div id="skills-list" class="skills-list"></div>
+      <label class="upload-skill-btn" title="Upload a .md skill file">
+        + Upload Skill
+        <input type="file" accept=".md" id="skill-upload-input" onchange="uploadSkill(event)" style="display:none">
+      </label>
+    </div>
+
+    <!-- Sidebar Footer -->
+    <div class="sidebar-footer">
+      <button class="icon-btn" onclick="showSettings()" title="Settings">⚙ Settings</button>
+    </div>
+  </aside>
+
+  <!-- Main Chat Area -->
+  <main class="chat-area">
+    <div class="chat-header">
+      <span id="current-conv-title">New Conversation</span>
+      <div class="tier-selector">
+        <button class="tier-btn active" data-tier="auto" onclick="setTier('auto')">Auto</button>
+        <button class="tier-btn" data-tier="tier1" onclick="setTier('tier1')">Quick</button>
+        <button class="tier-btn" data-tier="tier2" onclick="setTier('tier2')">Balanced</button>
+        <button class="tier-btn" data-tier="tier3" onclick="setTier('tier3')">Deep</button>
+      </div>
+    </div>
+
+    <!-- Memory Confirmation Card (hidden by default) -->
+    <div id="memory-confirm-card" class="memory-card hidden">
+      <div class="memory-card-header">🧠 Relevant context found</div>
+      <div id="memory-items" class="memory-items"></div>
+      <div class="memory-actions">
+        <button class="btn-confirm" onclick="useMemory()">✓ Use All</button>
+        <button class="btn-ghost-sm" onclick="skipMemory()">✗ Skip</button>
+      </div>
+    </div>
+
+    <!-- Messages -->
+    <div id="messages" class="messages">
+      <div class="welcome-state" id="welcome-state">
+        <div class="welcome-logo">⬡</div>
+        <h1 class="welcome-title">MultiMind</h1>
+        <p class="welcome-sub">Your personal AI. Multiple minds. One truth.</p>
+        <div class="starter-chips">
+          <button class="chip" onclick="sendStarter('Explain quantum computing simply')">Explain quantum computing</button>
+          <button class="chip" onclick="sendStarter('Write a Python function to sort a list of dicts')">Python sort dicts</button>
+          <button class="chip" onclick="sendStarter('What are the best strategies for managing personal finances?')">Personal finance tips</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input Area -->
+    <div class="input-area">
+      <div class="active-skills" id="active-skills-display"></div>
+      <div class="input-row">
+        <textarea
+          id="chat-input"
+          class="chat-input"
+          placeholder="Type your message..."
+          rows="1"
+          onkeydown="handleKey(event)"
+          oninput="autoResize(this)"
+        ></textarea>
+        <button class="send-btn" onclick="sendMessage()" id="send-btn" title="Send">↑</button>
+      </div>
+      <div class="input-meta">
+        <span id="tier-display" class="tier-display">Auto routing</span>
+        <span id="models-display" class="models-display"></span>
+      </div>
+    </div>
+  </main>
+
+  <!-- Right Panel — Model Responses -->
+  <aside class="right-panel" id="right-panel">
+    <div class="right-panel-header">
+      <span>Model Responses</span>
+      <button class="icon-btn-sm" onclick="toggleRightPanel()" id="panel-toggle">×</button>
+    </div>
+    <div id="model-responses" class="model-responses">
+      <div class="panel-empty">Responses from individual models will appear here.</div>
+    </div>
+  </aside>
+
+</div>
+
+<!-- ── Settings Modal ────────────────────────────────────────────────────── -->
+<div id="settings-modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>⚙ Settings</h3>
+      <button class="modal-close" onclick="hideSettings()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-section">
+        <div class="settings-title">API Keys</div>
+        <p class="settings-note">Keys are stored locally in your .env file. They never leave your machine.</p>
+        <div class="form-group">
+          <label>Gemini API Key <span id="gemini-status" class="key-status"></span></label>
+          <input type="password" id="gemini-key" placeholder="Paste your key..." class="settings-input" autocomplete="off">
+          <small>Get free key at <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer">aistudio.google.com</a></small>
+        </div>
+        <div class="form-group">
+          <label>NVIDIA NIM API Key <span id="nvidia-status" class="key-status"></span></label>
+          <input type="password" id="nvidia-key" placeholder="Paste your key..." class="settings-input" autocomplete="off">
+          <small>Get free key at <a href="https://build.nvidia.com" target="_blank" rel="noopener noreferrer">build.nvidia.com</a></small>
+        </div>
+        <div class="form-group">
+          <label>OpenRouter API Key <span id="openrouter-status" class="key-status"></span></label>
+          <input type="password" id="openrouter-key" placeholder="Paste your key..." class="settings-input" autocomplete="off">
+          <small>Get free key at <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer">openrouter.ai</a></small>
+        </div>
+        <button class="btn-primary" onclick="saveSettings()">Save Keys</button>
+        <div id="settings-msg" class="settings-msg hidden"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SECURITY: CSRF token stored in meta tag, never in localStorage -->
+<meta name="csrf-token" content="{{ csrf_token }}">
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
