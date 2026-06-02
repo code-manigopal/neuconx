@@ -1,205 +1,512 @@
 /**
- * NeuConX — Frontend Application
- * 
- * SECURITY NOTES (Principal Architect):
- * 1. CSRF token read from meta tag (not localStorage — XSS resistant)
- * 2. All user content rendered via textContent (not innerHTML) to prevent XSS
- * 3. No eval(), no Function() — strict content policy
- * 4. API keys never stored in JS or localStorage
- * 5. Fetch calls use credentials: 'same-origin' only
+ * NeuConX — Frontend (Phase 2+3)
+ *
+ * SECURITY:
+ * - CSRF token from <meta> tag only (never localStorage)
+ * - All user content via textContent (never innerHTML) to block XSS
+ * - No eval() / Function() anywhere
+ * - Fetch: credentials:'same-origin' only
+ *
+ * Phase 2: Multi-model status display, tier feedback, model response panel
+ * Phase 3: Session memory sync, conversation delete, clear memory
  */
 
 'use strict';
 
-// ── SECURITY: Read CSRF token from meta tag ───────────────────────────────
-const getCSRFToken = () => {
-  const meta = document.querySelector('meta[name="csrf-token"]');
-  return meta ? meta.getAttribute('content') : '';
-};
+// ── CSRF ──────────────────────────────────────────────────────────────────────
+// Token injected by Flask into <meta name="csrf-token"> at page load.
+// Safety net: if file is served statically (template not rendered),
+// the meta will contain literal "{{ csrf_token }}" — detect and auto-fetch.
+let _csrfToken = null;
 
-// ── State ─────────────────────────────────────────────────────────────────
+async function ensureCSRFToken() {
+  if (_csrfToken) return _csrfToken;
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  const raw  = meta?.getAttribute('content') || '';
+  if (raw && !raw.includes('{{')) {
+    _csrfToken = raw;
+    return _csrfToken;
+  }
+  // Not rendered by Flask — fetch fresh token
+  console.warn('NeuConX: CSRF not in meta — fetching from /api/csrf-token');
+  try {
+    const res  = await fetch('/api/csrf-token', { credentials: 'same-origin' });
+    const data = await res.json();
+    _csrfToken = data.token || '';
+    if (meta) meta.setAttribute('content', _csrfToken);
+  } catch (e) {
+    console.error('NeuConX: CSRF fetch failed', e);
+    _csrfToken = '';
+  }
+  return _csrfToken;
+}
+
+const getCSRFToken = () => _csrfToken || '';
+
+// ── State ─────────────────────────────────────────────────────────────────────
 const state = {
   currentConvId: null,
-  messages: [],
-  selectedTier: 'auto',
-  activeSkills: new Set(),
-  isLoading: false,
+  messages:      [],
+  selectedTier:  'auto',
+  activeSkills:  new Set(),
+  isLoading:     false,
   onboardingStep: 0,
   onboardingAnswers: {}
 };
 
-// ── Onboarding Data ───────────────────────────────────────────────────────
-const ONBOARDING_STEPS = [
-  { section: 'Welcome', question: null },
-  {
-    section: 'Identity',
-    question: 'What is your full name and what do people usually call you? Where are you currently based (city, country)?'
-  },
-  {
-    section: 'Education',
-    question: 'What is your current education? Any degrees, certifications, or programs you are enrolled in right now?'
-  },
-  {
-    section: 'Career',
-    question: 'What do you currently do professionally? Job title, company, years of experience, and main technical skills?'
-  },
-  {
-    section: 'Goals',
-    question: 'What are your top 3 goals right now — personally or professionally? What are you actively working toward?'
-  },
-  {
-    section: 'Working Style',
-    question: 'How do you prefer responses — detailed and thorough, or short and direct? Formal or casual tone?'
-  },
-  {
-    section: 'Current Projects',
-    question: 'What projects are you currently working on? Any side projects, businesses, or ongoing work?'
-  }
+// Model color map
+const MODEL_COLORS = {
+  gemini:   '#4285F4',
+  nvidia:   '#76B900',
+  deepseek: '#00C4FF',
+  mistral:  '#FF7000',
+  groq:     '#F55036',
+  cerebras: '#8B5CF6'
+};
+
+// ── Onboarding steps ──────────────────────────────────────────────────────────
+const OB_STEPS = [
+  { section: 'Welcome',  question: null },
+  { section: 'Identity', question: 'Your full name and what city/country are you based in?' },
+  { section: 'Education',question: 'Current education — degrees, programs, or certifications you hold or are pursuing?' },
+  { section: 'Career',   question: 'What do you do professionally? Job title, company, years of experience, main tech stack?' },
+  { section: 'Goals',    question: 'Top 3 goals you are actively working toward right now (personal or professional)?' },
+  { section: 'Style',    question: 'How do you prefer responses — detailed or concise? Formal or casual? Any other preferences?' },
+  { section: 'Projects', question: 'Current projects you are working on — side projects, startups, ongoing work?' }
 ];
 
-// ── Secure Fetch Helper ───────────────────────────────────────────────────
-/**
- * SECURITY: Centralized fetch with CSRF header.
- * Always same-origin. Never sends credentials cross-origin.
- */
-async function secureFetch(url, options = {}) {
-  const defaults = {
+// ── Secure fetch ──────────────────────────────────────────────────────────────
+async function secureFetch(url, opts = {}) {
+  // Always ensure token is ready — handles first load and static-file edge case
+  await ensureCSRFToken();
+  const res = await fetch(url, {
     credentials: 'same-origin',
+    ...opts,
     headers: {
       'Content-Type': 'application/json',
       'X-CSRF-Token': getCSRFToken(),
-      ...options.headers
+      ...(opts.headers || {})
     }
-  };
-  const merged = { ...defaults, ...options, headers: { ...defaults.headers, ...options.headers } };
-  const response = await fetch(url, merged);
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: 'Network error' }));
-    throw new Error(err.error || `HTTP ${response.status}`);
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(e.error || `HTTP ${res.status}`);
   }
-  return response.json();
+  return res.json();
 }
 
-// ── XSS-Safe DOM Helpers ──────────────────────────────────────────────────
-/**
- * SECURITY: Never use innerHTML with user content.
- * All user-provided text rendered via textContent only.
- */
-function safeText(text) {
-  const el = document.createElement('span');
-  el.textContent = text;
-  return el.innerHTML; // Now HTML-escaped
-}
+// ── DOM helpers (XSS-safe) ────────────────────────────────────────────────────
+const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
-function setTextContent(el, text) {
-  if (el) el.textContent = text;
-}
-
-// ── Initialize ────────────────────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  await loadConversations();
-  await loadSkills();
-  await loadSettings();
-  newChat();
+  // MUST run first — all secureFetch calls need a valid CSRF token
+  await ensureCSRFToken();
+  await Promise.all([loadSettings(), loadConversations(), loadSkills(), fetchUsage()]);
+  setupStarters();
+  // Phase 5: Check RAG status
+  await checkRAGStatus();
 });
 
-// ── Conversations ─────────────────────────────────────────────────────────
+// ── Starter chips ─────────────────────────────────────────────────────────────
+function setupStarters() {
+  document.querySelectorAll('.chip[data-prompt]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.getElementById('chat-input').value = chip.dataset.prompt;
+      sendMessage();
+    });
+  });
+}
+
+// ── Settings & model status ───────────────────────────────────────────────────
+async function loadSettings() {
+  try {
+    const data = await secureFetch('/api/settings');
+    const models = ['gemini', 'nvidia', 'openrouter', 'groq', 'cerebras'];
+
+    // Update status badges in settings modal
+    models.forEach(m => {
+      const el = document.getElementById(`${m}-status`);
+      if (!el) return;
+      if (data[`${m}_configured`]) {
+        el.textContent = `✓ ${data[`${m}_hint`] || 'configured'}`;
+        el.className = 'key-status configured';
+      } else {
+        el.textContent = '✗ not set';
+        el.className = 'key-status missing';
+      }
+    });
+
+    // Model status dots in header
+    updateModelStatusBar(data);
+
+    // No-keys warning on welcome screen
+    const warn = document.getElementById('no-keys-warning');
+    if (warn) warn.classList.toggle('hidden', data.any_configured);
+
+    // Models display in input meta
+    const active = models.filter(m => data[`${m}_configured`]);
+    setText('models-display', active.length ? `${active.join(' · ')} ready` : 'No models — open Settings');
+
+  } catch (e) {
+    console.error('Settings load failed:', e.message);
+  }
+}
+
+// ── Model quota info (fetched once, updated after each chat) ─────────────────
+// Structure: { gemini: { used: 47, limit: 1500, resetIn: '14h' }, ... }
+let _usageData = {};
+
+async function fetchUsage() {
+  try {
+    const data = await secureFetch('/api/usage');
+    _usageData = data || {};
+  } catch (e) {
+    // Non-fatal — tooltips just show less detail
+  }
+}
+
+function updateModelStatusBar(data) {
+  const bar = document.getElementById('model-status-bar');
+  if (!bar) return;
+  bar.innerHTML = '';
+
+  const exhausted = data.exhausted_models || [];
+
+  const MODELS = [
+    { key: 'gemini',     name: 'Gemini 2.0 Flash',  limit: 1500,  resetLabel: 'Daily',   unit: 'req/day'  },
+    { key: 'groq',       name: 'Groq Llama 3.3 70B', limit: 14400, resetLabel: 'Daily',   unit: 'req/day'  },
+    { key: 'cerebras',   name: 'Cerebras Llama 3.3', limit: 60,    resetLabel: 'Minute',  unit: 'req/min'  },
+    { key: 'nvidia',     name: 'NVIDIA NIM',         limit: 40,    resetLabel: 'Minute',  unit: 'req/min'  },
+    { key: 'openrouter', name: 'OpenRouter',         limit: null,  resetLabel: 'Credits', unit: 'credits'  }
+  ];
+
+  MODELS.forEach(({ key, name, limit, resetLabel, unit }) => {
+    const configured  = data[`${key}_configured`];
+    const isExhausted = exhausted.includes(key);
+    const usage       = _usageData[key] || {};
+
+    // ── Dot color ──
+    let dotColor, statusClass, statusText;
+    if (!configured) {
+      dotColor = '#1e2d3d'; statusClass = 'nokey'; statusText = 'No Key';
+    } else if (isExhausted) {
+      dotColor = '#ff7b00'; statusClass = 'exhausted'; statusText = 'Exhausted';
+    } else {
+      dotColor = MODEL_COLORS[key] || '#4a6478'; statusClass = 'ready'; statusText = 'Ready';
+    }
+
+    // ── Wrapper ──
+    const wrap = document.createElement('div');
+    wrap.className = 'model-dot-wrap';
+
+    // ── Dot ──
+    const dot = document.createElement('div');
+    dot.className = `model-dot ${configured && !isExhausted ? 'active' : ''}`;
+    dot.style.background = dotColor;
+    dot.style.color = dotColor;
+    wrap.appendChild(dot);
+
+    // ── Tooltip ──
+    const tip = document.createElement('div');
+    tip.className = 'model-tooltip';
+
+    // Header row
+    const header = document.createElement('div');
+    header.className = 'tooltip-header';
+
+    const modelName = document.createElement('span');
+    modelName.className = 'tooltip-model-name';
+    modelName.style.color = dotColor;
+    modelName.textContent = name;
+
+    const badge = document.createElement('span');
+    badge.className = `tooltip-status-badge ${statusClass}`;
+    badge.textContent = statusText;
+
+    header.appendChild(modelName);
+    header.appendChild(badge);
+    tip.appendChild(header);
+
+    if (configured) {
+      // ── Usage bar (if we have data) ──
+      const used  = usage.used  ?? null;
+      const pct   = (limit && used !== null) ? Math.min(100, Math.round((used / limit) * 100)) : null;
+      const remaining = (limit && used !== null) ? Math.max(0, limit - used) : null;
+
+      if (pct !== null) {
+        // Bar color: green → yellow → red based on usage
+        const barColor = pct > 85 ? '#ff4444' : pct > 60 ? '#ff7b00' : dotColor;
+
+        const row = document.createElement('div');
+        row.className = 'tooltip-row';
+
+        const labelRow = document.createElement('div');
+        labelRow.className = 'tooltip-label';
+
+        const labelText = document.createElement('span');
+        labelText.className = 'tooltip-label-text';
+        labelText.textContent = `${resetLabel} usage`;
+
+        const labelVal = document.createElement('span');
+        labelVal.className = 'tooltip-label-val';
+        labelVal.style.color = barColor;
+        labelVal.textContent = `${used} / ${limit} ${unit}`;
+
+        labelRow.appendChild(labelText);
+        labelRow.appendChild(labelVal);
+
+        const track = document.createElement('div');
+        track.className = 'tooltip-bar-track';
+
+        const fill = document.createElement('div');
+        fill.className = 'tooltip-bar-fill';
+        fill.style.width = `${pct}%`;
+        fill.style.background = `linear-gradient(90deg, ${barColor}99, ${barColor})`;
+
+        track.appendChild(fill);
+        row.appendChild(labelRow);
+        row.appendChild(track);
+        tip.appendChild(row);
+
+        // Remaining counter
+        const remRow = document.createElement('div');
+        remRow.className = 'tooltip-row';
+        const remLabel = document.createElement('div');
+        remLabel.className = 'tooltip-label';
+
+        const remText = document.createElement('span');
+        remText.className = 'tooltip-label-text';
+        remText.textContent = 'Remaining';
+
+        const remVal = document.createElement('span');
+        remVal.className = 'tooltip-label-val';
+        remVal.style.color = barColor;
+        remVal.textContent = `${remaining.toLocaleString()} ${unit}`;
+
+        remLabel.appendChild(remText);
+        remLabel.appendChild(remVal);
+        remRow.appendChild(remLabel);
+        tip.appendChild(remRow);
+
+        if (usage.resetIn) {
+          const div = document.createElement('div');
+          div.className = 'tooltip-divider';
+          tip.appendChild(div);
+
+          const hint = document.createElement('div');
+          hint.className = 'tooltip-hint';
+          hint.textContent = `Resets in ${usage.resetIn}`;
+          tip.appendChild(hint);
+        }
+
+      } else {
+        // No usage data yet — show hint
+        const hint = document.createElement('div');
+        hint.className = 'tooltip-hint';
+        hint.textContent = isExhausted
+          ? 'Quota exhausted — auto-skipped until restart'
+          : `Free tier · ${unit} · Send a message to track usage`;
+        tip.appendChild(hint);
+      }
+
+      // Hint for key format
+      if (data[`${key}_hint`]) {
+        const div = document.createElement('div');
+        div.className = 'tooltip-divider';
+        tip.appendChild(div);
+        const keyHint = document.createElement('div');
+        keyHint.className = 'tooltip-hint';
+        keyHint.textContent = `Key: ${data[`${key}_hint`]}`;
+        tip.appendChild(keyHint);
+      }
+
+    } else {
+      // Not configured
+      const hint = document.createElement('div');
+      hint.className = 'tooltip-hint';
+      hint.textContent = 'Not configured · Open Settings to add a free key';
+      tip.appendChild(hint);
+    }
+
+    wrap.appendChild(tip);
+    bar.appendChild(wrap);
+  });
+}
+
+async function saveSettings() {
+  const payload = {
+    gemini_key:     document.getElementById('gemini-key')?.value.trim()     || '',
+    nvidia_key:     document.getElementById('nvidia-key')?.value.trim()     || '',
+    openrouter_key: document.getElementById('openrouter-key')?.value.trim() || '',
+    groq_key:       document.getElementById('groq-key')?.value.trim()       || '',
+    cerebras_key:   document.getElementById('cerebras-key')?.value.trim()   || ''
+  };
+
+  const msgEl = document.getElementById('settings-msg');
+  try {
+    const data = await secureFetch('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    msgEl.textContent = data.message || 'Saved.';
+    msgEl.className = 'settings-msg success';
+    msgEl.classList.remove('hidden');
+    // Clear inputs
+    ['gemini-key','nvidia-key','openrouter-key','groq-key','cerebras-key'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    await loadSettings();
+    setTimeout(() => msgEl.classList.add('hidden'), 5000);
+  } catch (e) {
+    msgEl.textContent = e.message || 'Save failed.';
+    msgEl.className = 'settings-msg error';
+    msgEl.classList.remove('hidden');
+  }
+}
+
+function showSettings() { document.getElementById('settings-modal').classList.remove('hidden'); }
+function hideSettings()  { document.getElementById('settings-modal').classList.add('hidden'); }
+
+document.addEventListener('click', e => {
+  if (e.target === document.getElementById('settings-modal')) hideSettings();
+});
+
+// ── Conversations ─────────────────────────────────────────────────────────────
 async function loadConversations() {
   try {
     const convs = await secureFetch('/api/conversations');
-    const list = document.getElementById('conv-list');
+    const list  = document.getElementById('conv-list');
     list.innerHTML = '';
+
     if (!convs.length) {
       const empty = document.createElement('div');
       empty.className = 'conv-item';
-      empty.style.opacity = '0.4';
-      empty.style.cursor = 'default';
+      empty.style.cssText = 'opacity:.4;cursor:default;font-size:11px;';
       empty.textContent = 'No conversations yet';
       list.appendChild(empty);
       return;
     }
+
     convs.forEach(conv => {
       const item = document.createElement('div');
       item.className = 'conv-item';
       item.dataset.id = conv.id;
 
+      // Icon
       const icon = document.createElement('span');
-      icon.className = 'conv-item-icon';
       icon.textContent = '💬';
+      icon.style.cssText = 'opacity:.4;flex-shrink:0;font-size:11px;';
 
-      const title = document.createElement('span');
+      // Body
+      const body = document.createElement('div');
+      body.className = 'conv-item-body';
+
+      const title = document.createElement('div');
+      title.className = 'conv-title';
       title.textContent = conv.title; // textContent — XSS safe
-      title.style.flex = '1';
-      title.style.overflow = 'hidden';
-      title.style.textOverflow = 'ellipsis';
-      title.style.whiteSpace = 'nowrap';
+
+      const meta = document.createElement('div');
+      meta.className = 'conv-meta';
+      meta.textContent = `${conv.message_count} msgs · ${formatDate(conv.updated_at)}`;
+
+      body.appendChild(title);
+      body.appendChild(meta);
+
+      // Delete button
+      const del = document.createElement('button');
+      del.className = 'conv-delete';
+      del.textContent = '×';
+      del.title = 'Delete conversation';
+      del.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (!confirm('Delete this conversation?')) return;
+        await deleteConversation(conv.id);
+      });
 
       item.appendChild(icon);
-      item.appendChild(title);
+      item.appendChild(body);
+      item.appendChild(del);
       item.addEventListener('click', () => loadConversation(conv.id));
       list.appendChild(item);
     });
   } catch (e) {
-    console.error('Failed to load conversations:', e.message);
+    console.error('Conversations load failed:', e.message);
   }
 }
 
-async function loadConversation(convId) {
+async function loadConversation(id) {
   try {
-    const data = await secureFetch(`/api/conversations/${encodeURIComponent(convId)}`);
+    const data = await secureFetch(`/api/conversations/${encodeURIComponent(id)}`);
     state.currentConvId = data.id;
-    state.messages = data.messages || [];
-    setTextContent(document.getElementById('current-conv-title'), data.title || 'Conversation');
+    state.messages      = data.messages || [];
+    setText('current-conv-title', data.title || 'Conversation');
     renderMessages();
-    highlightActiveConv(convId);
+    highlightConv(id);
   } catch (e) {
-    console.error('Failed to load conversation:', e.message);
+    console.error('Load conversation failed:', e.message);
   }
 }
 
-function highlightActiveConv(convId) {
+async function deleteConversation(id) {
+  try {
+    await secureFetch(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (state.currentConvId === id) newChat();
+    await loadConversations();
+  } catch (e) {
+    console.error('Delete conversation failed:', e.message);
+  }
+}
+
+function highlightConv(id) {
   document.querySelectorAll('.conv-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.id === convId);
+    el.classList.toggle('active', el.dataset.id === id);
   });
 }
 
 function newChat() {
   state.currentConvId = null;
-  state.messages = [];
-  setTextContent(document.getElementById('current-conv-title'), 'New Conversation');
-  document.getElementById('messages').innerHTML = '';
+  state.messages      = [];
+  setText('current-conv-title', 'New Conversation');
 
-  // Restore welcome state
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '';
+
+  // Re-create welcome state
   const welcome = document.createElement('div');
   welcome.id = 'welcome-state';
   welcome.className = 'welcome-state';
   welcome.innerHTML = `
     <div class="welcome-logo">⬡</div>
     <h1 class="welcome-title">NeuConX</h1>
-    <p class="welcome-sub">Your personal AI. Multiple minds. One truth.</p>
+    <p class="welcome-sub">Multiple minds. One truth. Always free.</p>
+    <div id="no-keys-warning" class="no-keys-banner hidden">
+      ⚠️ No API keys configured — open Settings to add free keys.
+    </div>
     <div class="starter-chips">
-      <button class="chip" data-prompt="Explain quantum computing simply">Explain quantum computing</button>
-      <button class="chip" data-prompt="Write a Python function to sort a list of dicts">Python sort dicts</button>
-      <button class="chip" data-prompt="What are the best strategies for managing personal finances?">Personal finance tips</button>
+      <button class="chip" data-prompt="Explain quantum entanglement simply">Explain quantum entanglement</button>
+      <button class="chip" data-prompt="Write a Python function to flatten a nested list">Flatten nested list in Python</button>
+      <button class="chip" data-prompt="What are the top 5 personal finance principles?">Personal finance principles</button>
+      <button class="chip" data-prompt="Compare REST vs GraphQL APIs">REST vs GraphQL</button>
     </div>
   `;
-  // SECURITY: Add event listeners instead of onclick attributes
-  welcome.querySelectorAll('.chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      const prompt = chip.dataset.prompt;
-      document.getElementById('chat-input').value = prompt;
-      sendMessage();
-    });
-  });
-  document.getElementById('messages').appendChild(welcome);
+  msgs.appendChild(welcome);
+  setupStarters();
+  loadSettings(); // Re-check no-keys warning
   document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
 }
 
-// ── Skills ────────────────────────────────────────────────────────────────
+// ── Skills ────────────────────────────────────────────────────────────────────
+
+// ── Phase 4: Skills System ────────────────────────────────────────────────────
+
+let currentEditingSkill = null;
+
 async function loadSkills() {
   try {
     const skills = await secureFetch('/api/skills');
-    const list = document.getElementById('skills-list');
+    const list   = document.getElementById('skills-list');
     list.innerHTML = '';
     skills.forEach(skill => {
       const item = document.createElement('div');
@@ -207,98 +514,215 @@ async function loadSkills() {
 
       const toggle = document.createElement('button');
       toggle.className = 'skill-toggle';
-      toggle.setAttribute('aria-label', `Toggle ${skill.name} skill`);
+      toggle.setAttribute('aria-label', `Toggle ${skill.name}`);
       toggle.addEventListener('click', () => {
-        const isOn = toggle.classList.toggle('on');
-        if (isOn) state.activeSkills.add(skill.filename);
-        else state.activeSkills.delete(skill.filename);
+        const on = toggle.classList.toggle('on');
+        if (on) state.activeSkills.add(skill.filename);
+        else    state.activeSkills.delete(skill.filename);
         updateActiveSkillsDisplay();
       });
 
+      const nameWrap = document.createElement('div');
+      nameWrap.style.cssText = 'flex:1;min-width:0;';
+
       const name = document.createElement('span');
       name.className = 'skill-name';
-      name.textContent = skill.name; // textContent — XSS safe
+      name.textContent = skill.name;
+      name.title = skill.description || skill.preview;
+
+      const cat = document.createElement('span');
+      cat.style.cssText = 'font-size:9px;color:var(--text-dim);display:block;margin-top:1px;';
+      cat.textContent = skill.category || 'custom';
+
+      nameWrap.appendChild(name);
+      nameWrap.appendChild(cat);
+
+      const editBtn = document.createElement('button');
+      editBtn.style.cssText = 'background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 4px;opacity:0;transition:opacity .15s;';
+      editBtn.textContent = '✎';
+      editBtn.title = 'Edit skill';
+      editBtn.addEventListener('click', (e) => { e.stopPropagation(); openSkillEditor(skill.name); });
+      item.addEventListener('mouseenter', () => editBtn.style.opacity = '1');
+      item.addEventListener('mouseleave', () => editBtn.style.opacity = '0');
 
       item.appendChild(toggle);
-      item.appendChild(name);
+      item.appendChild(nameWrap);
+      item.appendChild(editBtn);
       list.appendChild(item);
     });
   } catch (e) {
-    console.error('Failed to load skills:', e.message);
+    console.error('Skills load failed:', e.message);
   }
 }
 
+async function openSkillEditor(skillName) {
+  try {
+    const skill = skillName
+      ? await secureFetch(`/api/skills/${encodeURIComponent(skillName)}.md`)
+      : { name: 'new_skill', content: '# Skill: New Skill\n\nCategory: custom\nDescription: What this skill does\n\n## Instructions\n\nDescribe the skill behaviour here.' };
+
+    currentEditingSkill = skill.name;
+
+    // Build modal
+    const existing = document.getElementById('skill-editor-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'skill-editor-modal';
+    modal.className = 'modal';
+    modal.style.cssText = 'z-index:1100;';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.cssText = 'max-width:680px;width:95%;';
+
+    card.innerHTML = `
+      <div class="modal-header">
+        <h3>✎ Skill Editor${skill.name ? ' — ' + skill.name : ''}</h3>
+        <button class="modal-close" onclick="closeSkillEditor()">×</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
+        <input id="skill-editor-name" class="settings-input" style="width:200px;" 
+          value="${skill.name || ''}" placeholder="skill_name">
+        <select id="skill-editor-cat" class="settings-input" style="width:140px;background:var(--surface2);">
+          ${['writing','coding','research','analysis','creative','productivity','custom']
+            .map(c => `<option value="${c}" ${(skill.category||'custom')===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+        <span style="font-size:10px;color:var(--text-dim);">category</span>
+      </div>
+      <textarea id="skill-editor-content" style="
+        width:100%;height:320px;background:var(--surface2);border:1px solid var(--border);
+        border-radius:var(--radius);padding:12px;color:var(--text);font-family:var(--font-mono);
+        font-size:12px;resize:vertical;outline:none;line-height:1.6;
+      ">${skill.content || ''}</textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
+        <div style="font-size:10px;color:var(--text-dim);">Markdown format · Max 50KB</div>
+        <div style="display:flex;gap:8px;">
+          ${skillName ? `<button class="btn-ghost" onclick="deleteSkillFromEditor('${skill.name}')" 
+            style="border-color:rgba(255,68,68,.3);color:var(--red);font-size:12px;">🗑 Delete</button>` : ''}
+          <button class="btn-primary" onclick="saveSkillFromEditor()" style="font-size:12px;padding:8px 16px;">💾 Save</button>
+        </div>
+      </div>
+      <div id="skill-editor-msg" style="display:none;font-size:11px;margin-top:8px;"></div>
+    `;
+
+    modal.appendChild(card);
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeSkillEditor(); });
+    document.getElementById('skill-editor-content').focus();
+  } catch(e) {
+    showToast('Failed to open skill editor: ' + e.message);
+  }
+}
+
+async function saveSkillFromEditor() {
+  const name    = document.getElementById('skill-editor-name')?.value.trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const cat     = document.getElementById('skill-editor-cat')?.value;
+  const content = document.getElementById('skill-editor-content')?.value;
+  const msgEl   = document.getElementById('skill-editor-msg');
+
+  if (!name || !content) { showToast('Name and content required'); return; }
+
+  // Prepend category metadata if not present
+  let finalContent = content;
+  if (!content.toLowerCase().includes('category:')) {
+    finalContent = `Category: ${cat}\n` + content;
+  }
+
+  try {
+    await secureFetch(`/api/skills/${encodeURIComponent(name)}.md`, {
+      method: 'PUT',
+      body: JSON.stringify({ content: finalContent })
+    });
+    if (msgEl) { msgEl.textContent = '✓ Saved'; msgEl.style.color = 'var(--green)'; msgEl.style.display='block'; }
+    setTimeout(() => closeSkillEditor(), 1200);
+    await loadSkills();
+    showToast(`Skill "${name}" saved`);
+  } catch(e) {
+    if (msgEl) { msgEl.textContent = '✗ ' + e.message; msgEl.style.color = 'var(--red)'; msgEl.style.display='block'; }
+  }
+}
+
+async function deleteSkillFromEditor(skillName) {
+  if (!confirm(`Delete skill "${skillName}"? This cannot be undone.`)) return;
+  try {
+    await secureFetch(`/api/skills/${encodeURIComponent(skillName)}.md`, { method: 'DELETE' });
+    closeSkillEditor();
+    await loadSkills();
+    showToast(`Skill "${skillName}" deleted`);
+  } catch(e) {
+    showToast('Delete failed: ' + e.message);
+  }
+}
+
+function closeSkillEditor() {
+  document.getElementById('skill-editor-modal')?.remove();
+  currentEditingSkill = null;
+}
+
+
 function updateActiveSkillsDisplay() {
-  const display = document.getElementById('active-skills-display');
-  display.innerHTML = '';
-  state.activeSkills.forEach(skill => {
+  const el = document.getElementById('active-skills-display');
+  el.innerHTML = '';
+  state.activeSkills.forEach(s => {
     const tag = document.createElement('span');
     tag.className = 'active-skill-tag';
-    tag.textContent = skill.replace('.md', ''); // textContent — XSS safe
-    display.appendChild(tag);
+    tag.textContent = s.replace('.md', ''); // textContent — XSS safe
+    el.appendChild(tag);
   });
 }
 
 async function uploadSkill(event) {
   const file = event.target.files[0];
   if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.md')) { alert('Only .md files allowed'); return; }
+  if (file.size > 50 * 1024) { alert('Max 50KB per skill file'); return; }
 
-  // SECURITY: Client-side validation (server also validates)
-  if (!file.name.toLowerCase().endsWith('.md')) {
-    alert('Only .md files are allowed');
-    return;
-  }
-  if (file.size > 50 * 1024) {
-    alert('Skill file must be under 50KB');
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append('file', file);
+  const form = new FormData();
+  form.append('file', file);
   try {
-    const response = await fetch('/api/skills/upload', {
+    const res = await fetch('/api/skills/upload', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'X-CSRF-Token': getCSRFToken() },
-      body: formData
+      body: form
     });
-    if (response.ok) {
-      await loadSkills();
-    } else {
-      const err = await response.json();
-      alert(err.error || 'Upload failed');
-    }
+    if (res.ok) await loadSkills();
+    else { const e = await res.json(); alert(e.error || 'Upload failed'); }
   } catch (e) {
     console.error('Upload error:', e.message);
   }
-  event.target.value = ''; // Reset input
+  event.target.value = '';
 }
 
-// ── Chat ──────────────────────────────────────────────────────────────────
-function handleKey(event) {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault();
-    sendMessage();
+// ── Phase 3: Memory ────────────────────────────────────────────────────────────
+async function clearMemory() {
+  if (!confirm('Clear session memory? The AI will forget recent context.')) return;
+  try {
+    await secureFetch('/api/memory/clear', { method: 'POST' });
+    state.messages = [];
+    showToast('Session memory cleared');
+  } catch (e) {
+    console.error('Clear memory failed:', e.message);
   }
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 }
 
 function autoResize(el) {
   el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  el.style.height = Math.min(el.scrollHeight, 180) + 'px';
 }
 
 async function sendMessage() {
   if (state.isLoading) return;
-
-  const input = document.getElementById('chat-input');
+  const input   = document.getElementById('chat-input');
   const message = input.value.trim();
   if (!message) return;
-
-  // SECURITY: Basic length validation
-  if (message.length > 8000) {
-    alert('Message too long. Maximum 8000 characters.');
-    return;
-  }
+  if (message.length > 8000) { alert('Message too long (max 8000 chars)'); return; }
 
   input.value = '';
   input.style.height = 'auto';
@@ -306,52 +730,43 @@ async function sendMessage() {
   document.getElementById('send-btn').disabled = true;
 
   // Remove welcome state
-  const welcome = document.getElementById('welcome-state');
-  if (welcome) welcome.remove();
+  document.getElementById('welcome-state')?.remove();
 
-  // Add user message
   addMessage('user', message);
   state.messages.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
 
-  // Add thinking indicator
-  const thinkingId = addThinking();
+  const thinkId = addThinking();
 
   try {
     const payload = {
       message,
-      history: state.messages.slice(-20),
-      tier_override: state.selectedTier === 'auto' ? null : state.selectedTier,
-      skills_active: Array.from(state.activeSkills)
+      history:        state.messages.slice(-20),
+      tier_override:  state.selectedTier === 'auto' ? null : state.selectedTier,
+      skills_active:  Array.from(state.activeSkills)
     };
 
-    const data = await secureFetch('/api/chat', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
+    const data = await secureFetch('/api/chat', { method: 'POST', body: JSON.stringify(payload) });
 
-    removeThinking(thinkingId);
+    removeThinking(thinkId);
 
     const answer = data.final_answer || 'No response received.';
-    addMessage('ai', answer, data.tier_used, data.models_used);
-    state.messages.push({
-      role: 'assistant',
-      content: answer,
-      timestamp: new Date().toISOString()
-    });
+    addMessage('ai', answer, data.tier_used, data.models_used, data.models_called);
+    state.messages.push({ role: 'assistant', content: answer, timestamp: new Date().toISOString() });
 
-    // Update right panel
+    // Update panels
     updateModelResponses(data.model_responses || []);
+    setText('tier-display', `${data.tier_used || 'auto'} · ${data.models_used || 0} model${data.models_used !== 1 ? 's' : ''}`);
+    setText('models-display', data.models_called?.join(' · ') || '');
 
-    // Update tier display
-    setTextContent(document.getElementById('tier-display'),
-      `${data.tier_used || 'auto'} · ${data.models_used || 0} model${data.models_used !== 1 ? 's' : ''}`);
-
-    // Auto-save conversation
     await saveCurrentConversation();
+    // Refresh model dots + usage counters after each response
+    await Promise.all([loadSettings(), fetchUsage(), checkRAGStatus()]);
+    // Phase 6: Check for new memory candidates
+    setTimeout(checkMemoryCandidates, 1500);
 
   } catch (e) {
-    removeThinking(thinkingId);
-    addMessage('ai', `Error: ${e.message}. Please check your API keys in Settings.`);
+    removeThinking(thinkId);
+    addMessage('ai', `⚠️ Error: ${e.message}`);
     console.error('Chat error:', e.message);
   } finally {
     state.isLoading = false;
@@ -360,13 +775,8 @@ async function sendMessage() {
   }
 }
 
-function sendStarter(prompt) {
-  document.getElementById('chat-input').value = prompt;
-  sendMessage();
-}
-
-function addMessage(role, content, tier, modelsUsed) {
-  const messages = document.getElementById('messages');
+function addMessage(role, content, tier, modelsUsed, modelsCalled) {
+  const msgs    = document.getElementById('messages');
   const wrapper = document.createElement('div');
   wrapper.className = `message message-${role}`;
 
@@ -380,68 +790,73 @@ function addMessage(role, content, tier, modelsUsed) {
     const meta = document.createElement('div');
     meta.className = 'message-meta';
     if (tier) {
-      const tierSpan = document.createElement('span');
-      tierSpan.textContent = `${tier}${modelsUsed ? ` · ${modelsUsed} models` : ''}`;
-      meta.appendChild(tierSpan);
+      const t = document.createElement('span');
+      t.textContent = `${tier}${modelsCalled?.length ? ` · ${modelsCalled.join(', ')}` : ''}`;
+      meta.appendChild(t);
     }
     wrapper.appendChild(meta);
   }
 
-  messages.appendChild(wrapper);
-  messages.scrollTop = messages.scrollHeight;
+  msgs.appendChild(wrapper);
+  msgs.scrollTop = msgs.scrollHeight;
 }
 
 function addThinking() {
-  const id = 'thinking-' + Date.now();
-  const messages = document.getElementById('messages');
-  const wrapper = document.createElement('div');
-  wrapper.className = 'message message-ai';
-  wrapper.id = id;
-
-  const indicator = document.createElement('div');
-  indicator.className = 'thinking-indicator';
+  const id   = `think-${Date.now()}`;
+  const msgs = document.getElementById('messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'message message-ai';
+  wrap.id = id;
+  const ind = document.createElement('div');
+  ind.className = 'thinking-indicator';
   for (let i = 0; i < 3; i++) {
-    const dot = document.createElement('div');
-    dot.className = 'thinking-dot';
-    indicator.appendChild(dot);
+    const d = document.createElement('div');
+    d.className = 'thinking-dot';
+    ind.appendChild(d);
   }
-
-  wrapper.appendChild(indicator);
-  messages.appendChild(wrapper);
-  messages.scrollTop = messages.scrollHeight;
+  wrap.appendChild(ind);
+  msgs.appendChild(wrap);
+  msgs.scrollTop = msgs.scrollHeight;
   return id;
 }
 
 function removeThinking(id) {
-  const el = document.getElementById(id);
-  if (el) el.remove();
+  document.getElementById(id)?.remove();
 }
 
 function renderMessages() {
-  const messages = document.getElementById('messages');
-  messages.innerHTML = '';
-  state.messages.forEach(msg => {
-    addMessage(msg.role, msg.content);
-  });
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '';
+  state.messages.forEach(m => addMessage(m.role, m.content));
 }
 
 function updateModelResponses(responses) {
   const panel = document.getElementById('model-responses');
   panel.innerHTML = '';
 
-  const colors = { gemini: '#4285F4', nvidia: '#76B900', deepseek: '#00C4FF', mistral: '#FF7000' };
+  if (!responses.length) {
+    const e = document.createElement('div');
+    e.className = 'panel-empty';
+    e.textContent = 'No model responses yet.';
+    panel.appendChild(e);
+    return;
+  }
 
   responses.forEach(r => {
     const card = document.createElement('div');
     card.className = 'model-response-card';
-    card.style.borderLeftColor = colors[r.model] || '#444';
+    card.style.borderLeftColor = MODEL_COLORS[r.model] || '#444';
+
+    const header = document.createElement('div');
+    header.className = 'model-response-header';
 
     const name = document.createElement('div');
     name.className = 'model-response-name';
-    name.style.color = colors[r.model] || '#888';
+    name.style.color = MODEL_COLORS[r.model] || '#888';
     name.textContent = r.model.toUpperCase(); // textContent — XSS safe
 
-    card.appendChild(name);
+    header.appendChild(name);
+    card.appendChild(header);
 
     if (r.error) {
       const err = document.createElement('div');
@@ -457,199 +872,120 @@ function updateModelResponses(responses) {
 
     panel.appendChild(card);
   });
-
-  if (!responses.length) {
-    const empty = document.createElement('div');
-    empty.className = 'panel-empty';
-    empty.textContent = 'No model responses yet.';
-    panel.appendChild(empty);
-  }
 }
 
-// ── Tier Selection ────────────────────────────────────────────────────────
+// ── Tier ──────────────────────────────────────────────────────────────────────
 function setTier(tier) {
   state.selectedTier = tier;
-  document.querySelectorAll('.tier-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tier === tier);
-  });
-  const labels = { auto: 'Auto routing', tier1: 'Quick — 1 model', tier2: 'Balanced — 2 models', tier3: 'Deep — all models' };
-  setTextContent(document.getElementById('tier-display'), labels[tier] || 'Auto routing');
+  document.querySelectorAll('.tier-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tier === tier));
+  const labels = {
+    auto:  'Auto routing',
+    tier1: 'Quick — 1 model',
+    tier2: 'Balanced — 2 models',
+    tier3: 'Deep — all models'
+  };
+  setText('tier-display', labels[tier] || 'Auto routing');
 }
 
-// ── Save Conversation ─────────────────────────────────────────────────────
+// ── Save conversation ─────────────────────────────────────────────────────────
 async function saveCurrentConversation() {
   if (!state.messages.length) return;
   try {
-    const title = state.messages[0]?.content?.slice(0, 50) || 'New Conversation';
-    const payload = {
-      id: state.currentConvId,
-      title,
-      messages: state.messages,
-      created_at: new Date().toISOString()
-    };
-    const data = await secureFetch('/api/conversations', {
+    const title = state.messages[0]?.content?.slice(0, 50) || 'Conversation';
+    const data  = await secureFetch('/api/conversations', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        id:         state.currentConvId,
+        title,
+        messages:   state.messages,
+        created_at: new Date().toISOString()
+      })
     });
     if (data.id && !state.currentConvId) {
       state.currentConvId = data.id;
-      setTextContent(document.getElementById('current-conv-title'), title);
+      setText('current-conv-title', title);
       await loadConversations();
-      highlightActiveConv(data.id);
+      highlightConv(data.id);
     }
   } catch (e) {
-    console.error('Failed to save conversation:', e.message);
+    console.error('Save conversation failed:', e.message);
   }
 }
 
-// ── Settings ──────────────────────────────────────────────────────────────
-async function loadSettings() {
-  try {
-    const data = await secureFetch('/api/settings');
-    const statuses = { gemini: 'gemini-status', nvidia: 'nvidia-status', openrouter: 'openrouter-status' };
-    Object.entries(statuses).forEach(([key, elId]) => {
-      const el = document.getElementById(elId);
-      if (el) {
-        if (data[`${key}_configured`]) {
-          el.textContent = `✓ configured ${data[`${key}_hint`] || ''}`;
-          el.className = 'key-status configured';
-        } else {
-          el.textContent = '✗ not set';
-          el.className = 'key-status missing';
-        }
-      }
-    });
-    const models = Object.entries({ gemini: data.gemini_configured, nvidia: data.nvidia_configured, openrouter: data.openrouter_configured })
-      .filter(([, v]) => v).map(([k]) => k);
-    setTextContent(document.getElementById('models-display'), models.length ? `${models.join(', ')} active` : 'No models configured');
-  } catch (e) {
-    console.error('Failed to load settings:', e.message);
-  }
-}
-
-async function saveSettings() {
-  const payload = {
-    gemini_key: document.getElementById('gemini-key').value.trim(),
-    nvidia_key: document.getElementById('nvidia-key').value.trim(),
-    openrouter_key: document.getElementById('openrouter-key').value.trim()
-  };
-
-  const msgEl = document.getElementById('settings-msg');
-  try {
-    const data = await secureFetch('/api/settings', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-    msgEl.textContent = data.message || 'Saved successfully.';
-    msgEl.className = 'settings-msg success';
-    msgEl.classList.remove('hidden');
-    // Clear inputs after save
-    ['gemini-key', 'nvidia-key', 'openrouter-key'].forEach(id => {
-      document.getElementById(id).value = '';
-    });
-    await loadSettings();
-    setTimeout(() => msgEl.classList.add('hidden'), 4000);
-  } catch (e) {
-    msgEl.textContent = e.message || 'Failed to save settings.';
-    msgEl.className = 'settings-msg error';
-    msgEl.classList.remove('hidden');
-  }
-}
-
-function showSettings() {
-  document.getElementById('settings-modal').classList.remove('hidden');
-}
-function hideSettings() {
-  document.getElementById('settings-modal').classList.add('hidden');
-}
-
-// Close modal on outside click
-document.addEventListener('click', (e) => {
-  const modal = document.getElementById('settings-modal');
-  if (e.target === modal) hideSettings();
-});
-
-// ── Right Panel ───────────────────────────────────────────────────────────
+// ── Right panel ───────────────────────────────────────────────────────────────
 function toggleRightPanel() {
-  const panel = document.getElementById('right-panel');
-  panel.classList.toggle('hidden');
+  document.getElementById('right-panel').classList.toggle('hidden');
 }
 
-// ── Memory Confirmation ───────────────────────────────────────────────────
-function useMemory() {
-  document.getElementById('memory-confirm-card').classList.add('hidden');
-}
-function skipMemory() {
-  document.getElementById('memory-confirm-card').classList.add('hidden');
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.style.cssText = `
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:#1a2530;border:1px solid #1e2d3d;color:#c8d6e5;
+    padding:8px 18px;border-radius:20px;font-size:12px;
+    font-family:'JetBrains Mono',monospace;z-index:9999;
+    animation:fadeUp .25s ease;
+  `;
+  t.textContent = msg; // textContent — XSS safe
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
 }
 
-// ── Onboarding ────────────────────────────────────────────────────────────
-let currentStep = 0;
+// ── Utility ───────────────────────────────────────────────────────────────────
+function formatDate(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+  } catch { return ''; }
+}
+
+// ── Onboarding ────────────────────────────────────────────────────────────────
+let obStep = 0;
+
+function showObStep(n) {
+  const total    = OB_STEPS.length - 1;
+  const pct      = (n / total) * 100;
+  document.getElementById('onboarding-fill').style.width = `${pct}%`;
+  setText('onboarding-step-label', `${n} / ${total}`);
+
+  const step = OB_STEPS[n];
+  if (n === 0) {
+    setText('ob-title', 'Welcome to NeuConX');
+    document.getElementById('ob-question-wrap').classList.add('hidden');
+    document.getElementById('ob-back').classList.add('hidden');
+    setText('ob-next', 'Get Started →');
+  } else {
+    setText('ob-title', `${n}. ${step.section}`);
+    document.getElementById('ob-question-wrap').classList.remove('hidden');
+    setText('ob-question', step.question);
+    document.getElementById('ob-answer').value = state.onboardingAnswers[step.section.toLowerCase()] || '';
+    document.getElementById('ob-back').classList.remove('hidden');
+    setText('ob-next', n === total ? 'Complete ✓' : 'Next →');
+  }
+}
 
 function onboardingNext() {
-  if (currentStep === 0) {
-    // Welcome step — just move forward
-    currentStep = 1;
-    showOnboardingStep(1);
+  if (obStep === 0) { obStep = 1; showObStep(1); return; }
+
+  const ans = document.getElementById('ob-answer')?.value.trim() || '';
+  if (!ans) {
+    const ta = document.getElementById('ob-answer');
+    ta.style.borderColor = 'rgba(255,68,68,0.5)';
+    setTimeout(() => { ta.style.borderColor = ''; }, 1500);
     return;
   }
 
-  // Save answer
-  const answer = document.getElementById('ob-answer')?.value?.trim() || '';
-  if (!answer && currentStep > 0) {
-    document.getElementById('ob-answer').style.borderColor = 'rgba(255,77,77,0.5)';
-    setTimeout(() => {
-      if (document.getElementById('ob-answer'))
-        document.getElementById('ob-answer').style.borderColor = '';
-    }, 1500);
-    return;
-  }
+  state.onboardingAnswers[OB_STEPS[obStep].section.toLowerCase()] = ans;
 
-  const step = ONBOARDING_STEPS[currentStep];
-  state.onboardingAnswers[step.section.toLowerCase()] = answer;
-
-  if (currentStep < ONBOARDING_STEPS.length - 1) {
-    currentStep++;
-    showOnboardingStep(currentStep);
-  } else {
-    completeOnboarding();
-  }
+  if (obStep < OB_STEPS.length - 1) { obStep++; showObStep(obStep); }
+  else completeOnboarding();
 }
 
 function onboardingBack() {
-  if (currentStep > 1) {
-    currentStep--;
-    showOnboardingStep(currentStep);
-  }
-}
-
-function showOnboardingStep(step) {
-  const total = ONBOARDING_STEPS.length - 1;
-  const progress = ((step) / total) * 100;
-  document.getElementById('onboarding-fill').style.width = `${progress}%`;
-  setTextContent(document.getElementById('onboarding-step'), `${step} / ${total}`);
-
-  const stepData = ONBOARDING_STEPS[step];
-  const content = document.getElementById('onboarding-content');
-  const questionWrap = document.getElementById('ob-question-wrap');
-
-  if (step === 0) {
-    setTextContent(document.getElementById('ob-title'), 'Welcome to NeuConX');
-    setTextContent(document.querySelector('#ob-subtitle') || document.createElement('p'),
-      'Before we begin, I need to understand you deeply.');
-    questionWrap.classList.add('hidden');
-    document.getElementById('ob-back').classList.add('hidden');
-    setTextContent(document.getElementById('ob-next'), 'Get Started →');
-  } else {
-    const title = document.getElementById('ob-title');
-    if (title) setTextContent(title, `Section ${step}: ${stepData.section}`);
-    questionWrap.classList.remove('hidden');
-    setTextContent(document.getElementById('ob-question'), stepData.question);
-    document.getElementById('ob-answer').value = state.onboardingAnswers[stepData.section.toLowerCase()] || '';
-    document.getElementById('ob-back').classList.remove('hidden');
-    const isLast = step === ONBOARDING_STEPS.length - 1;
-    setTextContent(document.getElementById('ob-next'), isLast ? 'Complete Setup ✓' : 'Next →');
-  }
+  if (obStep > 1) { obStep--; showObStep(obStep); }
 }
 
 async function completeOnboarding() {
@@ -658,20 +994,344 @@ async function completeOnboarding() {
       method: 'POST',
       body: JSON.stringify(state.onboardingAnswers)
     });
-    document.getElementById('onboarding-overlay').classList.add('hidden');
-    document.getElementById('app').classList.remove('hidden');
-    await loadConversations();
-    await loadSkills();
   } catch (e) {
-    console.error('Onboarding save failed:', e.message);
-    // Still let user in even if save fails
-    document.getElementById('onboarding-overlay').classList.add('hidden');
-    document.getElementById('app').classList.remove('hidden');
+    console.error('Profile save failed:', e.message);
+  }
+  document.getElementById('onboarding-overlay').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  await Promise.all([loadConversations(), loadSkills(), loadSettings()]);
+}
+
+// Init onboarding if visible
+if (!document.getElementById('onboarding-overlay')?.classList.contains('hidden')) {
+  showObStep(0);
+}
+
+
+// ── Phase 5: RAG Memory Search ────────────────────────────────────────────────
+
+let ragStatus = { available: false, count: 0 };
+
+async function checkRAGStatus() {
+  try {
+    const data = await secureFetch('/api/memory/status');
+    ragStatus = { available: data.rag_available, count: data.embeddings_count };
+    updateRAGIndicator();
+  } catch(e) {}
+}
+
+function updateRAGIndicator() {
+  const memBtn = document.querySelector('.icon-btn[onclick="clearMemory()"]');
+  if (memBtn && ragStatus.available) {
+    memBtn.textContent = `🧠 Memory (${ragStatus.count} stored)`;
   }
 }
 
-// Initialize onboarding if needed
-if (document.getElementById('onboarding-overlay') &&
-    !document.getElementById('onboarding-overlay').classList.contains('hidden')) {
-  showOnboardingStep(0);
+async function openMemorySearch() {
+  const existing = document.getElementById('memory-search-modal');
+  if (existing) { existing.remove(); return; }
+
+  const modal = document.createElement('div');
+  modal.id = 'memory-search-modal';
+  modal.className = 'modal';
+  modal.style.zIndex = '1100';
+
+  const card = document.createElement('div');
+  card.className = 'modal-card';
+  card.style.maxWidth = '600px';
+
+  card.innerHTML = `
+    <div class="modal-header">
+      <h3>🔍 Memory Search</h3>
+      <button class="modal-close" onclick="document.getElementById('memory-search-modal')?.remove()">×</button>
+    </div>
+    <p style="font-size:11px;color:var(--text-dim);margin-bottom:14px;">
+      ${ragStatus.available 
+        ? `Semantic search across ${ragStatus.count} stored messages.` 
+        : '⚠️ ChromaDB not installed. Install with: pip install chromadb sentence-transformers'}
+    </p>
+    <div class="input-row" style="margin-bottom:14px;">
+      <input id="mem-search-input" class="settings-input" placeholder="Search your conversation history..." 
+        style="flex:1;" onkeydown="if(event.key==='Enter') searchMemory()">
+      <button class="btn-primary" onclick="searchMemory()" style="padding:8px 16px;font-size:12px;">Search</button>
+    </div>
+    <div id="mem-search-results" style="display:flex;flex-direction:column;gap:8px;max-height:400px;overflow-y:auto;"></div>
+  `;
+
+  modal.appendChild(card);
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
+  document.getElementById('mem-search-input')?.focus();
+}
+
+async function searchMemory() {
+  const query   = document.getElementById('mem-search-input')?.value.trim();
+  const results = document.getElementById('mem-search-results');
+  if (!query || !results) return;
+
+  results.innerHTML = '<div style="font-size:11px;color:var(--text-dim);text-align:center;padding:20px;">Searching...</div>';
+
+  try {
+    const data = await secureFetch('/api/memory/search', {
+      method: 'POST',
+      body: JSON.stringify({ query, n: 8 })
+    });
+
+    results.innerHTML = '';
+    if (!data.results?.length) {
+      results.innerHTML = '<div style="font-size:11px;color:var(--text-dim);text-align:center;padding:20px;">No relevant memories found.</div>';
+      return;
+    }
+
+    data.results.forEach(r => {
+      const card = document.createElement('div');
+      card.style.cssText = 'background:var(--surface2);border-radius:8px;padding:10px 12px;border-left:2px solid;';
+      card.style.borderLeftColor = r.role === 'user' ? 'var(--cyan)' : 'var(--green)';
+
+      const meta = document.createElement('div');
+      meta.style.cssText = 'font-size:9px;color:var(--text-dim);margin-bottom:4px;display:flex;justify-content:space-between;';
+      const relPct = Math.round(r.relevance * 100);
+      meta.innerHTML = `<span>${r.role} · ${r.timestamp?.slice(0,10) || 'unknown date'}</span><span style="color:${relPct>70?'var(--green)':'var(--text-dim)'};">${relPct}% match</span>`;
+
+      const content = document.createElement('div');
+      content.style.cssText = 'font-size:11px;color:var(--text-mid);line-height:1.5;';
+      content.textContent = r.content;
+
+      card.appendChild(meta);
+      card.appendChild(content);
+      results.appendChild(card);
+    });
+  } catch(e) {
+    results.innerHTML = `<div style="font-size:11px;color:var(--red);text-align:center;padding:20px;">${e.message}</div>`;
+  }
+}
+
+
+// ── Phase 6: Memory Confirmation UI ──────────────────────────────────────────
+
+async function checkMemoryCandidates() {
+  try {
+    const data = await secureFetch('/api/memory/candidates');
+    const pending = data.pending || [];
+    if (pending.length > 0) {
+      showMemoryCandidates(pending);
+    }
+  } catch(e) {}
+}
+
+function showMemoryCandidates(candidates) {
+  const existing = document.getElementById('memory-candidates-bar');
+  if (existing) existing.remove();
+
+  const bar = document.createElement('div');
+  bar.id = 'memory-candidates-bar';
+  bar.style.cssText = `
+    position:fixed;bottom:20px;right:20px;z-index:900;
+    background:var(--surface);border:1px solid rgba(0,232,150,.3);
+    border-radius:12px;padding:14px 16px;max-width:300px;
+    box-shadow:0 8px 32px rgba(0,0,0,.6);animation:fadeUp .3s ease;
+    font-family:var(--font-mono);
+  `;
+
+  const header = document.createElement('div');
+  header.style.cssText = 'font-size:11px;color:var(--green);font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px;';
+  header.innerHTML = '🧠 <span>Remember these?</span>';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.style.cssText = 'background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;margin-left:auto;';
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', () => bar.remove());
+  header.appendChild(closeBtn);
+  bar.appendChild(header);
+
+  candidates.slice(0, 3).forEach(c => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+    row.id = `candidate-${c.id}`;
+
+    const fact = document.createElement('span');
+    fact.style.cssText = 'flex:1;font-size:10px;color:var(--text-mid);line-height:1.4;';
+    fact.textContent = c.fact;
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.style.cssText = 'background:rgba(0,232,150,.15);border:1px solid rgba(0,232,150,.3);color:var(--green);border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;flex-shrink:0;';
+    confirmBtn.textContent = '✓';
+    confirmBtn.title = 'Remember this';
+    confirmBtn.addEventListener('click', () => confirmCandidate(c.id));
+
+    const rejectBtn = document.createElement('button');
+    rejectBtn.style.cssText = 'background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.2);color:var(--red);border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;flex-shrink:0;';
+    rejectBtn.textContent = '✗';
+    rejectBtn.title = 'Forget this';
+    rejectBtn.addEventListener('click', () => rejectCandidate(c.id));
+
+    row.appendChild(fact);
+    row.appendChild(confirmBtn);
+    row.appendChild(rejectBtn);
+    bar.appendChild(row);
+  });
+
+  if (candidates.length > 3) {
+    const more = document.createElement('div');
+    more.style.cssText = 'font-size:9px;color:var(--text-dim);margin-top:4px;text-align:right;';
+    more.textContent = `+${candidates.length - 3} more`;
+    bar.appendChild(more);
+  }
+
+  document.body.appendChild(bar);
+  setTimeout(() => bar?.remove(), 15000); // Auto-dismiss after 15s
+}
+
+async function confirmCandidate(id) {
+  try {
+    await secureFetch(`/api/memory/candidates/${id}/confirm`, { method: 'POST' });
+    document.getElementById(`candidate-${id}`)?.remove();
+    showToast('✓ Remembered');
+  } catch(e) {}
+}
+
+async function rejectCandidate(id) {
+  try {
+    await secureFetch(`/api/memory/candidates/${id}/reject`, { method: 'POST' });
+    document.getElementById(`candidate-${id}`)?.remove();
+  } catch(e) {}
+}
+
+// ── Phase 7: Profile viewer ────────────────────────────────────────────────────
+
+async function openProfileViewer() {
+  try {
+    const data = await secureFetch('/api/profile/learned');
+    const existing = document.getElementById('profile-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'profile-modal';
+    modal.className = 'modal';
+    modal.style.zIndex = '1100';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '560px';
+
+    const facts = data.learned_facts || [];
+    const ob    = data.onboarding || {};
+
+    card.innerHTML = `
+      <div class="modal-header">
+        <h3>👤 My Profile</h3>
+        <button class="modal-close" onclick="document.getElementById('profile-modal')?.remove()">×</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;max-height:500px;overflow-y:auto;">
+        <div>
+          <div style="font-size:10px;color:var(--cyan);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Onboarding Answers</div>
+          ${Object.entries(ob).map(([k, v]) => `
+            <div style="background:var(--surface2);border-radius:8px;padding:8px 12px;margin-bottom:6px;">
+              <div style="font-size:9px;color:var(--text-dim);margin-bottom:3px;">${k.replace(/_/g,' ')}</div>
+              <div style="font-size:11px;color:var(--text-mid);">${typeof v === 'string' ? v : JSON.stringify(v)}</div>
+            </div>
+          `).join('') || '<div style="font-size:11px;color:var(--text-dim);">No onboarding data yet.</div>'}
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--green);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">
+            AI-Learned Facts (${facts.length})
+          </div>
+          <div id="learned-facts-list">
+            ${facts.map((f, i) => `
+              <div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:8px;padding:8px 12px;margin-bottom:6px;" id="fact-${i}">
+                <span style="font-size:11px;color:var(--text-mid);flex:1;">${f}</span>
+                <button onclick="deleteLearnedFact(${i})" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:13px;" title="Forget this">×</button>
+              </div>
+            `).join('') || '<div style="font-size:11px;color:var(--text-dim);">No learned facts yet. Chat more to build your profile!</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+
+    modal.appendChild(card);
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
+  } catch(e) {
+    showToast('Failed to load profile: ' + e.message);
+  }
+}
+
+async function deleteLearnedFact(idx) {
+  try {
+    await secureFetch(`/api/profile/learned/${idx}`, { method: 'DELETE' });
+    document.getElementById(`fact-${idx}`)?.remove();
+    showToast('Fact removed from memory');
+  } catch(e) {
+    showToast('Failed to delete: ' + e.message);
+  }
+}
+
+// ── Reset Functions ────────────────────────────────────────────────────────────
+
+function showResetMsg(text, isError = false) {
+  const el = document.getElementById('reset-msg');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `settings-msg ${isError ? 'error' : 'success'}`;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 4000);
+}
+
+async function resetOnboarding() {
+  if (!confirm('Reset onboarding? You\'ll redo the 7-step setup on next page load.')) return;
+  try {
+    const d = await secureFetch('/api/reset/onboarding', { method: 'POST' });
+    showResetMsg('✓ ' + d.message);
+    setTimeout(() => location.reload(), 1500);
+  } catch(e) { showResetMsg('✗ ' + e.message, true); }
+}
+
+async function resetSessionMemory() {
+  try {
+    const d = await secureFetch('/api/reset/memory', { method: 'POST' });
+    state.messages = [];
+    showResetMsg('✓ ' + d.message);
+    showToast('Session memory cleared');
+  } catch(e) { showResetMsg('✗ ' + e.message, true); }
+}
+
+async function resetConversations() {
+  if (!confirm('Delete ALL conversations permanently? This cannot be undone.')) return;
+  try {
+    const d = await secureFetch('/api/reset/conversations', { method: 'POST' });
+    showResetMsg('✓ ' + d.message);
+    newChat();
+    await loadConversations();
+    showToast(d.message);
+  } catch(e) { showResetMsg('✗ ' + e.message, true); }
+}
+
+async function resetLearnedProfile() {
+  if (!confirm('Delete all AI-learned facts? Your onboarding answers are kept.')) return;
+  try {
+    const d = await secureFetch('/api/reset/profile', { method: 'POST' });
+    showResetMsg('✓ ' + d.message);
+    showToast('Learned profile cleared');
+  } catch(e) { showResetMsg('✗ ' + e.message, true); }
+}
+
+async function resetAPIKeys() {
+  if (!confirm('Remove all API keys from .env? You\'ll need to re-enter them.')) return;
+  try {
+    const d = await secureFetch('/api/reset/keys', { method: 'POST' });
+    showResetMsg('✓ ' + d.message);
+    await loadSettings();
+    showToast('API keys wiped');
+  } catch(e) { showResetMsg('✗ ' + e.message, true); }
+}
+
+async function factoryReset() {
+  if (!confirm('☢ FULL FACTORY RESET\n\nThis will permanently delete:\n• All conversations\n• Your profile & onboarding\n• All API keys\n• Session memory\n\nAre you absolutely sure?')) return;
+  if (!confirm('Last chance — this cannot be undone. Continue?')) return;
+  try {
+    const d = await secureFetch('/api/reset/factory', { method: 'POST' });
+    showResetMsg('✓ ' + d.message);
+    showToast('Factory reset complete — reloading...');
+    setTimeout(() => location.reload(), 2000);
+  } catch(e) { showResetMsg('✗ ' + e.message, true); }
 }

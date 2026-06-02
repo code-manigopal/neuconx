@@ -1,24 +1,22 @@
-# NeuConX — Python Dependencies
-# SECURITY NOTE (Principal Architect):
-# All versions are pinned to prevent supply chain attacks.
-# Run `pip install -r requirements.txt --break-system-packages` on first launch.
-# Regularly audit with `pip-audit` for known vulnerabilities.
-# Never upgrade blindly — review changelogs for security patches first.
+# NeuConX — Dependencies (Phase 2–7)
+# All versions pinned — supply chain security.
+# Install: pip install -r requirements.txt --break-system-packages
 
 # ── Web Framework ──────────────────────────────────────────────────────────────
 Flask==3.0.3
-Werkzeug==3.0.3              # Flask dependency — pinned separately for security
+Werkzeug==3.0.3
 
 # ── Security ───────────────────────────────────────────────────────────────────
-Flask-Limiter==3.7.0         # Rate limiting — prevents DoS attacks
-bleach==6.1.0                # HTML sanitization — prevents XSS
-python-dotenv==1.0.1         # Secure env variable loading
+Flask-Limiter==3.7.0
+bleach==6.1.0
+python-dotenv==1.0.1
 
-# ── AI Model SDKs ──────────────────────────────────────────────────────────────
-google-generativeai==0.8.3   # Gemini API
-requests==2.32.3             # HTTP calls to NVIDIA, OpenRouter (pinned for CVE protection)
-urllib3==2.2.2               # requests dependency — pinned (multiple past CVEs)
+# ── AI SDKs & HTTP ─────────────────────────────────────────────────────────────
+google-generativeai==0.8.3
+requests==2.32.3
+urllib3==2.2.2
 
-# ── Future Phases (uncomment when needed) ──────────────────────────────────────
-# chromadb==0.5.20           # Phase 5: Vector database
-# sentence-transformers==3.2.1  # Phase 5: Local embeddings
+# ── Phase 5: RAG / Semantic Memory (optional but recommended) ──────────────────
+# Uncomment and run: pip install chromadb sentence-transformers --break-system-packages
+# chromadb==0.5.20
+# sentence-transformers==3.2.1

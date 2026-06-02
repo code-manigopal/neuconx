@@ -3,7 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<!-- SECURITY: CSP meta tag as backup (primary is set in HTTP headers via Flask) -->
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <title>NeuConX — Personal AI Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -12,24 +11,20 @@
 </head>
 <body>
 
-<!-- ── Onboarding Overlay ────────────────────────────────────────────────── -->
+<!-- ── Onboarding ─────────────────────────────────────────────────────────── -->
 <div id="onboarding-overlay" class="overlay {% if onboarding_complete %}hidden{% endif %}">
   <div class="onboarding-card">
     <div class="onboarding-logo">⬡ NeuConX</div>
-    <div id="onboarding-progress" class="progress-bar">
-      <div id="onboarding-fill" class="progress-fill" style="width:14%"></div>
-    </div>
-    <div id="onboarding-step" class="onboarding-step">1 / 7</div>
-
+    <div class="progress-bar"><div id="onboarding-fill" class="progress-fill" style="width:14%"></div></div>
+    <div id="onboarding-step-label" class="onboarding-step">1 / 7</div>
     <div id="onboarding-content">
       <h2 id="ob-title">Welcome to NeuConX</h2>
-      <p id="ob-subtitle">Before we begin, I need to understand you deeply so every response is personalised to your life and goals. This takes about 3 minutes. You only do this once.</p>
+      <p id="ob-subtitle">I'll ask you 6 quick questions to personalise every response. Takes 2–3 minutes. Done once.</p>
       <div id="ob-question-wrap" class="hidden">
         <label id="ob-question" class="ob-label"></label>
         <textarea id="ob-answer" class="ob-textarea" rows="3" placeholder="Type your answer..."></textarea>
       </div>
     </div>
-
     <div class="onboarding-actions">
       <button id="ob-back" class="btn-ghost hidden" onclick="onboardingBack()">← Back</button>
       <button id="ob-next" class="btn-primary" onclick="onboardingNext()">Get Started →</button>
@@ -37,7 +32,7 @@
   </div>
 </div>
 
-<!-- ── Main App ──────────────────────────────────────────────────────────── -->
+<!-- ── App ────────────────────────────────────────────────────────────────── -->
 <div id="app" class="app-layout {% if not onboarding_complete %}hidden{% endif %}">
 
   <!-- Left Sidebar -->
@@ -47,14 +42,12 @@
       <button class="new-chat-btn" onclick="newChat()" title="New Chat">+</button>
     </div>
 
-    <!-- Conversation List -->
-    <div class="sidebar-section">
+    <div class="sidebar-section conversations-section">
       <div class="section-label">Conversations</div>
       <div id="conv-list" class="conv-list"></div>
     </div>
 
-    <!-- Skills Panel -->
-    <div class="sidebar-section">
+    <div class="sidebar-section skills-section">
       <div class="section-label">Skills</div>
       <div id="skills-list" class="skills-list"></div>
       <label class="upload-skill-btn" title="Upload a .md skill file">
@@ -63,61 +56,59 @@
       </label>
     </div>
 
-    <!-- Sidebar Footer -->
     <div class="sidebar-footer">
-      <button class="icon-btn" onclick="showSettings()" title="Settings">⚙ Settings</button>
+      <button class="icon-btn" onclick="showSettings()">⚙ Settings</button>
+      <button class="icon-btn" onclick="openSkillEditor(null)">+ New Skill</button>
+      <button class="icon-btn" onclick="openMemorySearch()">🔍 Search Memory</button>
+      <button class="icon-btn" onclick="openProfileViewer()">👤 My Profile</button>
+      <button class="icon-btn" onclick="clearMemory()">🧹 Clear Memory</button>
     </div>
   </aside>
 
-  <!-- Main Chat Area -->
+  <!-- Chat Area -->
   <main class="chat-area">
     <div class="chat-header">
       <span id="current-conv-title">New Conversation</span>
-      <div class="tier-selector">
-        <button class="tier-btn active" data-tier="auto" onclick="setTier('auto')">Auto</button>
-        <button class="tier-btn" data-tier="tier1" onclick="setTier('tier1')">Quick</button>
-        <button class="tier-btn" data-tier="tier2" onclick="setTier('tier2')">Balanced</button>
-        <button class="tier-btn" data-tier="tier3" onclick="setTier('tier3')">Deep</button>
-      </div>
-    </div>
-
-    <!-- Memory Confirmation Card (hidden by default) -->
-    <div id="memory-confirm-card" class="memory-card hidden">
-      <div class="memory-card-header">🧠 Relevant context found</div>
-      <div id="memory-items" class="memory-items"></div>
-      <div class="memory-actions">
-        <button class="btn-confirm" onclick="useMemory()">✓ Use All</button>
-        <button class="btn-ghost-sm" onclick="skipMemory()">✗ Skip</button>
-      </div>
-    </div>
-
-    <!-- Messages -->
-    <div id="messages" class="messages">
-      <div class="welcome-state" id="welcome-state">
-        <div class="welcome-logo">⬡</div>
-        <h1 class="welcome-title">NeuConX</h1>
-        <p class="welcome-sub">Your personal AI. Multiple minds. One truth.</p>
-        <div class="starter-chips">
-          <button class="chip" onclick="sendStarter('Explain quantum computing simply')">Explain quantum computing</button>
-          <button class="chip" onclick="sendStarter('Write a Python function to sort a list of dicts')">Python sort dicts</button>
-          <button class="chip" onclick="sendStarter('What are the best strategies for managing personal finances?')">Personal finance tips</button>
+      <div class="header-right">
+        <div id="model-status-bar" class="model-status-bar"></div>
+        <div class="tier-selector">
+          <button class="tier-btn active" data-tier="auto"  onclick="setTier('auto')">Auto</button>
+          <button class="tier-btn" data-tier="tier1" onclick="setTier('tier1')">Quick</button>
+          <button class="tier-btn" data-tier="tier2" onclick="setTier('tier2')">Balanced</button>
+          <button class="tier-btn" data-tier="tier3" onclick="setTier('tier3')">Deep</button>
         </div>
       </div>
     </div>
 
-    <!-- Input Area -->
+    <div id="messages" class="messages">
+      <div class="welcome-state" id="welcome-state">
+        <div class="welcome-logo">⬡</div>
+        <h1 class="welcome-title">NeuConX</h1>
+        <p class="welcome-sub">Multiple minds. One truth. Always free.</p>
+        <div id="no-keys-warning" class="no-keys-banner hidden">
+          ⚠️ No API keys configured — <button class="link-btn" onclick="showSettings()">open Settings</button> to add free keys.
+        </div>
+        <div class="starter-chips" id="starter-chips">
+          <button class="chip" data-prompt="Explain quantum entanglement simply">Explain quantum entanglement</button>
+          <button class="chip" data-prompt="Write a Python function to flatten a nested list">Flatten nested list in Python</button>
+          <button class="chip" data-prompt="What are the top 5 personal finance principles?">Personal finance principles</button>
+          <button class="chip" data-prompt="Compare REST vs GraphQL APIs">REST vs GraphQL</button>
+        </div>
+      </div>
+    </div>
+
     <div class="input-area">
-      <div class="active-skills" id="active-skills-display"></div>
+      <div id="active-skills-display" class="active-skills"></div>
       <div class="input-row">
         <textarea
           id="chat-input"
           class="chat-input"
-          placeholder="Type your message..."
+          placeholder="Message NeuConX..."
           rows="1"
           onkeydown="handleKey(event)"
           oninput="autoResize(this)"
         ></textarea>
-        <button class="send-btn" onclick="sendMessage()" id="send-btn" title="Send">↑</button>
+        <button class="send-btn" onclick="sendMessage()" id="send-btn" title="Send (Enter)">↑</button>
       </div>
       <div class="input-meta">
         <span id="tier-display" class="tier-display">Auto routing</span>
@@ -126,55 +117,154 @@
     </div>
   </main>
 
-  <!-- Right Panel — Model Responses -->
+  <!-- Right Panel -->
   <aside class="right-panel" id="right-panel">
     <div class="right-panel-header">
       <span>Model Responses</span>
-      <button class="icon-btn-sm" onclick="toggleRightPanel()" id="panel-toggle">×</button>
+      <button class="icon-btn-sm" onclick="toggleRightPanel()">×</button>
     </div>
     <div id="model-responses" class="model-responses">
-      <div class="panel-empty">Responses from individual models will appear here.</div>
+      <div class="panel-empty">Individual model responses appear here after each message.</div>
     </div>
   </aside>
-
 </div>
 
 <!-- ── Settings Modal ────────────────────────────────────────────────────── -->
 <div id="settings-modal" class="modal hidden">
-  <div class="modal-card">
+  <div class="modal-card settings-card">
     <div class="modal-header">
       <h3>⚙ Settings</h3>
       <button class="modal-close" onclick="hideSettings()">×</button>
     </div>
     <div class="modal-body">
-      <div class="settings-section">
-        <div class="settings-title">API Keys</div>
-        <p class="settings-note">Keys are stored locally in your .env file. They never leave your machine.</p>
-        <div class="form-group">
-          <label>Gemini API Key <span id="gemini-status" class="key-status"></span></label>
-          <input type="password" id="gemini-key" placeholder="Paste your key..." class="settings-input" autocomplete="off">
-          <small>Get free key at <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer">aistudio.google.com</a></small>
+      <p class="settings-note">
+        🔒 Keys stored in your local <code>.env</code> file only. Never leave your machine except for direct API calls. <strong>No restart needed</strong> after saving.
+      </p>
+
+      <div class="keys-grid">
+        <!-- Gemini -->
+        <div class="key-row">
+          <div class="key-info">
+            <span class="key-name">Gemini 2.0 Flash</span>
+            <span id="gemini-status" class="key-status"></span>
+          </div>
+          <input type="password" id="gemini-key" class="settings-input" placeholder="AIza..." autocomplete="off">
+          <small>Free 1,500 req/day · <a href="https://aistudio.google.com" target="_blank" rel="noopener">aistudio.google.com</a></small>
         </div>
-        <div class="form-group">
-          <label>NVIDIA NIM API Key <span id="nvidia-status" class="key-status"></span></label>
-          <input type="password" id="nvidia-key" placeholder="Paste your key..." class="settings-input" autocomplete="off">
-          <small>Get free key at <a href="https://build.nvidia.com" target="_blank" rel="noopener noreferrer">build.nvidia.com</a></small>
+
+        <!-- Groq -->
+        <div class="key-row">
+          <div class="key-info">
+            <span class="key-name">Groq <span class="badge-fast">⚡ Fastest</span></span>
+            <span id="groq-status" class="key-status"></span>
+          </div>
+          <input type="password" id="groq-key" class="settings-input" placeholder="gsk_..." autocomplete="off">
+          <small>Free · Llama 3.3 70B · <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a></small>
         </div>
-        <div class="form-group">
-          <label>OpenRouter API Key <span id="openrouter-status" class="key-status"></span></label>
-          <input type="password" id="openrouter-key" placeholder="Paste your key..." class="settings-input" autocomplete="off">
-          <small>Get free key at <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer">openrouter.ai</a></small>
+
+        <!-- Cerebras -->
+        <div class="key-row">
+          <div class="key-info">
+            <span class="key-name">Cerebras <span class="badge-fast">⚡ Fast</span></span>
+            <span id="cerebras-status" class="key-status"></span>
+          </div>
+          <input type="password" id="cerebras-key" class="settings-input" placeholder="csk-..." autocomplete="off">
+          <small>Free · Llama 3.3 70B · <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener">cloud.cerebras.ai</a></small>
         </div>
-        <button class="btn-primary" onclick="saveSettings()">Save Keys</button>
+
+        <!-- NVIDIA -->
+        <div class="key-row">
+          <div class="key-info">
+            <span class="key-name">NVIDIA NIM</span>
+            <span id="nvidia-status" class="key-status"></span>
+          </div>
+          <input type="password" id="nvidia-key" class="settings-input" placeholder="nvapi-..." autocomplete="off">
+          <small>Free 40 req/min · Llama 3.3 70B · <a href="https://build.nvidia.com" target="_blank" rel="noopener">build.nvidia.com</a></small>
+        </div>
+
+        <!-- OpenRouter -->
+        <div class="key-row">
+          <div class="key-info">
+            <span class="key-name">OpenRouter <span class="badge-multi">DeepSeek + Mistral</span></span>
+            <span id="openrouter-status" class="key-status"></span>
+          </div>
+          <input type="password" id="openrouter-key" class="settings-input" placeholder="sk-or-..." autocomplete="off">
+          <small>Free credits · <a href="https://openrouter.ai" target="_blank" rel="noopener">openrouter.ai</a></small>
+        </div>
+      </div>
+
+      <div class="settings-actions">
+        <button class="btn-primary" onclick="saveSettings()">💾 Save Keys</button>
         <div id="settings-msg" class="settings-msg hidden"></div>
       </div>
+
+      <div class="settings-tip">
+        💡 <strong>Tip:</strong> Add Groq or Cerebras to fix "Resource exhausted" from Gemini. They're faster and have generous free tiers.
+      </div>
+
+      <!-- ── Reset Section ─────────────────────────────────────────── -->
+      <div class="reset-section">
+        <div class="reset-title">⚠ Reset Options</div>
+        <div class="reset-grid">
+
+          <div class="reset-row">
+            <div class="reset-info">
+              <span class="reset-label">Onboarding</span>
+              <span class="reset-desc">Redo the 7-step setup wizard</span>
+            </div>
+            <button class="reset-btn" onclick="resetOnboarding()">Reset</button>
+          </div>
+
+          <div class="reset-row">
+            <div class="reset-info">
+              <span class="reset-label">Session Memory</span>
+              <span class="reset-desc">Clear in-memory chat context</span>
+            </div>
+            <button class="reset-btn" onclick="resetSessionMemory()">Reset</button>
+          </div>
+
+          <div class="reset-row">
+            <div class="reset-info">
+              <span class="reset-label">Conversations</span>
+              <span class="reset-desc">Delete all saved chat history</span>
+            </div>
+            <button class="reset-btn reset-btn-danger" onclick="resetConversations()">Delete All</button>
+          </div>
+
+          <div class="reset-row">
+            <div class="reset-info">
+              <span class="reset-label">Learned Profile</span>
+              <span class="reset-desc">Wipe AI-learned facts about you</span>
+            </div>
+            <button class="reset-btn reset-btn-danger" onclick="resetLearnedProfile()">Delete</button>
+          </div>
+
+          <div class="reset-row">
+            <div class="reset-info">
+              <span class="reset-label">API Keys</span>
+              <span class="reset-desc">Remove all keys from .env</span>
+            </div>
+            <button class="reset-btn reset-btn-danger" onclick="resetAPIKeys()">Wipe Keys</button>
+          </div>
+
+          <div class="reset-row">
+            <div class="reset-info">
+              <span class="reset-label">Factory Reset</span>
+              <span class="reset-desc">Wipe everything — fresh start</span>
+            </div>
+            <button class="reset-btn reset-btn-nuclear" onclick="factoryReset()">☢ Full Reset</button>
+          </div>
+
+        </div>
+        <div id="reset-msg" class="settings-msg hidden" style="margin-top:10px;"></div>
+      </div>
+
     </div>
   </div>
 </div>
 
-<!-- SECURITY: CSRF token stored in meta tag, never in localStorage -->
+<!-- SECURITY: CSRF token in meta tag, not localStorage -->
 <meta name="csrf-token" content="{{ csrf_token }}">
-
 <script src="/static/js/app.js"></script>
 </body>
 </html>
