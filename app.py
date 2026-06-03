@@ -27,7 +27,7 @@ from pathlib import Path
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, render_template, request, jsonify, session, abort
+from flask import Flask, render_template, request, jsonify, session, abort, send_from_directory
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv, dotenv_values
@@ -46,6 +46,11 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Suppress noisy third-party loggers (HuggingFace HTTP cache checks, etc.)
+for noisy in ['httpx', 'httpcore', 'sentence_transformers', 'huggingface_hub',
+              'urllib3.connectionpool', 'chromadb.telemetry']:
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -1391,7 +1396,7 @@ def _init_chroma():
 
         # Use local model — no API calls, no internet needed after first download
         embedding_fn = SentenceTransformerEmbeddingFunction(
-            model_name="all-MiniLM-L6-v2"  # 80MB, fast, good quality
+            model_name="all-MiniLM-L6-v2"
         )
 
         memory_dir = BASE_DIR / 'memory' / 'chroma'
@@ -1399,20 +1404,40 @@ def _init_chroma():
 
         _chroma_client = chromadb.PersistentClient(
             path=str(memory_dir),
-            settings=Settings(anonymized_telemetry=False)  # SECURITY: no telemetry
+            settings=Settings(anonymized_telemetry=False)
         )
-        _chroma_collection = _chroma_client.get_or_create_collection(
-            name='neuconx_memory',
-            embedding_function=embedding_fn,   # ← THIS was missing
-            metadata={'hnsw:space': 'cosine'}
-        )
+
+        # Handle conflict: collection may exist from a previous run without
+        # an embedding function. Try to get it first; if it conflicts, delete
+        # and recreate cleanly.
+        try:
+            _chroma_collection = _chroma_client.get_or_create_collection(
+                name='neuconx_memory',
+                embedding_function=embedding_fn,
+                metadata={'hnsw:space': 'cosine'}
+            )
+        except ValueError as ve:
+            if 'embedding function already exists' in str(ve).lower() or \
+               'already exists' in str(ve).lower():
+                logger.info("ChromaDB: embedding function conflict — rebuilding collection")
+                # Delete old collection and recreate with correct embedding function
+                _chroma_client.delete_collection('neuconx_memory')
+                _chroma_collection = _chroma_client.create_collection(
+                    name='neuconx_memory',
+                    embedding_function=embedding_fn,
+                    metadata={'hnsw:space': 'cosine'}
+                )
+                logger.info("ChromaDB: collection rebuilt cleanly — re-index via /api/memory/index")
+            else:
+                raise
+
         CHROMA_AVAILABLE = True
         count = _chroma_collection.count()
-        logger.info(f"ChromaDB ready — {count} embeddings stored — semantic memory active")
+        logger.info(f"ChromaDB ready — {count} embeddings — semantic memory active")
     except ImportError:
-        logger.info("ChromaDB/sentence-transformers not installed — run: pip install chromadb sentence-transformers --break-system-packages")
+        logger.info("ChromaDB not installed — run: pip install chromadb sentence-transformers --break-system-packages")
     except Exception as e:
-        logger.warning(f"ChromaDB init failed: {type(e).__name__}: {str(e)[:100]}")
+        logger.warning(f"ChromaDB init failed: {type(e).__name__}: {str(e)[:120]}")
     return CHROMA_AVAILABLE
 
 
@@ -1728,8 +1753,38 @@ def delete_learned_fact(idx):
 
 @app.route('/how_it_works.html')
 def how_it_works():
-    """Serve the flowchart explainer page."""
-    return send_from_directory(BASE_DIR, 'how_it_works.html')
+    """
+    Serve how_it_works.html — checks multiple locations:
+    1. Current working directory (where you ran start.bat from)
+    2. Same folder as app.py (BASE_DIR)
+    3. Static folder
+    """
+    filename = 'how_it_works.html'
+    search_dirs = [
+        Path(os.getcwd()),          # Where start.bat / python was launched from
+        BASE_DIR,                   # Same folder as app.py
+        BASE_DIR / 'static',        # static/ subfolder
+        BASE_DIR.parent,            # One level up
+    ]
+    for directory in search_dirs:
+        candidate = directory / filename
+        if candidate.exists():
+            logger.info(f"Serving {filename} from {directory}")
+            return send_from_directory(str(directory), filename)
+
+    # File not found in any location — show helpful message
+    checked = '\n'.join(f'  • {d}/{filename}' for d in search_dirs)
+    logger.warning(f"how_it_works.html not found. Searched:\n{checked}")
+    return (
+        f"<html><body style='background:#080c10;color:#c8d6e5;"
+        f"font-family:monospace;padding:40px;line-height:1.8'>"
+        f"<h2 style='color:#ff7b00'>⚠ how_it_works.html not found</h2>"
+        f"<p>Place <code>how_it_works.html</code> in your <strong>NEUCONX/</strong> "
+        f"folder (same folder as <code>app.py</code>), then refresh.</p>"
+        f"<p style='color:#4a6478;font-size:12px'>Searched in:<br>"
+        f"{'<br>'.join(f'&nbsp;&nbsp;• {d}/{filename}' for d in search_dirs)}</p>"
+        f"</body></html>"
+    ), 404
 
 
 # ── Error Handlers ─────────────────────────────────────────────────────────────
