@@ -676,8 +676,41 @@ def chat():
             'models_called': []
         }), 200
 
-    # Skills context
-    system_context = ''
+    # ── Build system context ──────────────────────────────────────────────────
+    system_parts = []
+
+    # 1. User profile — always injected so responses are personalised
+    if PROFILE_FILE.exists():
+        try:
+            profile = json.loads(PROFILE_FILE.read_text(encoding='utf-8'))
+            # Build a compact profile summary (not the full JSON blob)
+            profile_lines = []
+            field_labels = {
+                'identity':      'Name/Location',
+                'education':     'Education',
+                'career':        'Career',
+                'goals':         'Current Goals',
+                'style':         'Response Style Preference',
+                'projects':      'Current Projects',
+                'working_style': 'Working Style',
+            }
+            for key, label in field_labels.items():
+                val = profile.get(key)
+                if val and isinstance(val, str) and val.strip():
+                    profile_lines.append(f"- {label}: {val[:200]}")
+            # Include learned facts too
+            facts = profile.get('learned_facts', [])
+            if facts:
+                profile_lines.append(f"- Known facts: {'; '.join(facts[:10])}")
+
+            if profile_lines:
+                system_parts.append(
+                    "ABOUT THE USER (use this to personalise your response):\n" + "\n".join(profile_lines)
+                )
+        except Exception:
+            pass
+
+    # 2. Active skills
     skills_active = data.get('skills_active', [])
     if isinstance(skills_active, list):
         for skill_name in skills_active[:5]:
@@ -685,11 +718,34 @@ def chat():
             skill_path = SKILLS_DIR / safe_skill
             if skill_path.exists():
                 try:
-                    system_context += f"\n\n--- SKILL: {safe_skill} ---\n{skill_path.read_text(encoding='utf-8')[:2000]}"
+                    system_parts.append(
+                        f"ACTIVE SKILL — {safe_skill}:\n{skill_path.read_text(encoding='utf-8')[:2000]}"
+                    )
                 except Exception:
                     pass
 
-    enriched = f"{system_context}\n\n---\n\nUser: {message}" if system_context else message
+    # 3. Relevant semantic memory (if ChromaDB available)
+    if CHROMA_AVAILABLE or _init_chroma():
+        try:
+            mem_results = semantic_search(message, n_results=3)
+            if mem_results:
+                mem_snippets = []
+                for r in mem_results:
+                    if r['relevance'] > 0.55:  # Only high-relevance memory
+                        mem_snippets.append(f"- [{r['role']}]: {r['content'][:200]}")
+                if mem_snippets:
+                    system_parts.append(
+                        "RELEVANT CONTEXT FROM PAST CONVERSATIONS:\n" + "\n".join(mem_snippets)
+                    )
+        except Exception:
+            pass
+
+    # Assemble enriched prompt
+    if system_parts:
+        system_block = "\n\n---\n\n".join(system_parts)
+        enriched = f"{system_block}\n\n---\n\nUser message: {message}"
+    else:
+        enriched = message
 
     # Parallel model calls
     results: dict = {}
@@ -1320,29 +1376,43 @@ _chroma_client = None
 _chroma_collection = None
 
 def _init_chroma():
-    """Initialize ChromaDB lazily. Falls back silently if not installed."""
+    """
+    Initialize ChromaDB with local sentence-transformers embeddings.
+    Uses all-MiniLM-L6-v2 — small (80MB), fast, runs entirely offline.
+    Falls back silently if packages not installed.
+    """
     global CHROMA_AVAILABLE, _chroma_client, _chroma_collection
     if _chroma_client is not None:
         return CHROMA_AVAILABLE
     try:
         import chromadb
         from chromadb.config import Settings
+        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+
+        # Use local model — no API calls, no internet needed after first download
+        embedding_fn = SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L6-v2"  # 80MB, fast, good quality
+        )
+
         memory_dir = BASE_DIR / 'memory' / 'chroma'
         memory_dir.mkdir(parents=True, exist_ok=True)
+
         _chroma_client = chromadb.PersistentClient(
             path=str(memory_dir),
             settings=Settings(anonymized_telemetry=False)  # SECURITY: no telemetry
         )
         _chroma_collection = _chroma_client.get_or_create_collection(
             name='neuconx_memory',
+            embedding_function=embedding_fn,   # ← THIS was missing
             metadata={'hnsw:space': 'cosine'}
         )
         CHROMA_AVAILABLE = True
-        logger.info("ChromaDB initialized — semantic memory active")
+        count = _chroma_collection.count()
+        logger.info(f"ChromaDB ready — {count} embeddings stored — semantic memory active")
     except ImportError:
-        logger.info("ChromaDB not installed — semantic memory disabled (pip install chromadb sentence-transformers)")
+        logger.info("ChromaDB/sentence-transformers not installed — run: pip install chromadb sentence-transformers --break-system-packages")
     except Exception as e:
-        logger.warning(f"ChromaDB init failed: {type(e).__name__} — semantic memory disabled")
+        logger.warning(f"ChromaDB init failed: {type(e).__name__}: {str(e)[:100]}")
     return CHROMA_AVAILABLE
 
 

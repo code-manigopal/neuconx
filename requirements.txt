@@ -16,7 +16,9 @@ google-generativeai==0.8.3
 requests==2.32.3
 urllib3==2.2.2
 
-# ── Phase 5: RAG / Semantic Memory (optional but recommended) ──────────────────
-# Uncomment and run: pip install chromadb sentence-transformers --break-system-packages
-# chromadb==0.5.20
-# sentence-transformers==3.2.1
+# ── Phase 5: RAG / Semantic Memory ────────────────────────────────────────────
+# Run: pip install chromadb sentence-transformers --break-system-packages
+# First run downloads all-MiniLM-L6-v2 model (~80MB) — fully offline after that.
+# App works fine without these — semantic search just stays disabled.
+chromadb==0.6.3
+sentence-transformers==3.2.1
