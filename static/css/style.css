@@ -696,3 +696,34 @@ html, body {
   font-weight: 700;
 }
 .reset-btn-nuclear:hover { background: rgba(255,68,68,0.25); box-shadow: 0 0 12px rgba(255,68,68,0.2); }
+
+/* ── App Footer ──────────────────────────────────────────────────────────── */
+.app-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  z-index: 50;
+  padding: 0 20px;
+  letter-spacing: 0.2px;
+}
+.app-footer strong { color: var(--text-mid); }
+.footer-divider { color: var(--border); }
+.footer-link {
+  color: var(--cyan);
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+.footer-link:hover { opacity: 0.7; }
+
+/* Push chat input area up so footer doesn't overlap */
+.input-area { padding-bottom: 36px; }

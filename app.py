@@ -1724,6 +1724,14 @@ def delete_learned_fact(idx):
     except Exception:
         abort(500)
 
+# ── Static pages ──────────────────────────────────────────────────────────────
+
+@app.route('/how_it_works.html')
+def how_it_works():
+    """Serve the flowchart explainer page."""
+    return send_from_directory(BASE_DIR, 'how_it_works.html')
+
+
 # ── Error Handlers ─────────────────────────────────────────────────────────────
 
 @app.errorhandler(400)

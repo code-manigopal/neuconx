@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NeuConX — How It Works</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #080c10;
+    color: #c8d6e5;
+    font-family: 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    padding: 40px 20px;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 26px;
+    color: #00d4ff;
+    margin-bottom: 6px;
+    letter-spacing: -0.5px;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 13px;
+    color: #4a6478;
+    margin-bottom: 48px;
+  }
+
+  /* ── Layout ── */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    max-width: 820px;
+    margin: 0 auto;
+  }
+
+  /* ── Boxes ── */
+  .box {
+    border-radius: 14px;
+    padding: 18px 24px;
+    text-align: center;
+    position: relative;
+    width: 100%;
+  }
+  .box-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 5px;
+  }
+  .box-desc {
+    font-size: 12px;
+    line-height: 1.6;
+    opacity: 0.8;
+  }
+
+  /* Box color themes */
+  .cyan  { background: rgba(0,212,255,0.08);  border: 1.5px solid rgba(0,212,255,0.35);  }
+  .cyan  .box-title { color: #00d4ff; }
+  .green { background: rgba(0,232,150,0.08);  border: 1.5px solid rgba(0,232,150,0.35);  }
+  .green .box-title { color: #00e896; }
+  .orange{ background: rgba(255,123,0,0.08);  border: 1.5px solid rgba(255,123,0,0.35);  }
+  .orange .box-title { color: #ff7b00; }
+  .purple{ background: rgba(139,92,246,0.08); border: 1.5px solid rgba(139,92,246,0.35); }
+  .purple .box-title { color: #a78bfa; }
+  .blue  { background: rgba(66,133,244,0.08); border: 1.5px solid rgba(66,133,244,0.35); }
+  .blue  .box-title { color: #6ba3f7; }
+  .pink  { background: rgba(255,77,143,0.08); border: 1.5px solid rgba(255,77,143,0.35); }
+  .pink  .box-title { color: #ff6eb3; }
+
+  /* ── Arrow ── */
+  .arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    padding: 4px 0;
+  }
+  .arrow-line {
+    width: 2px;
+    height: 24px;
+    background: linear-gradient(to bottom, #1e2d3d, #2a4060);
+  }
+  .arrow-head {
+    width: 0; height: 0;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid #2a4060;
+  }
+  .arrow-label {
+    font-size: 10px;
+    color: #4a6478;
+    margin-top: 4px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  /* ── Split into 3 boxes ── */
+  .split-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    width: 100%;
+  }
+  .split-row .box {
+    width: 100%;
+  }
+
+  /* ── Model grid ── */
+  .model-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    width: 100%;
+  }
+  .model-card {
+    border-radius: 10px;
+    padding: 12px 14px;
+    text-align: center;
+  }
+  .model-card .model-name { font-size: 12px; font-weight: 700; margin-bottom: 3px; }
+  .model-card .model-detail { font-size: 10px; opacity: 0.6; line-height: 1.4; }
+
+  .m-groq     { background: rgba(245,80,54,0.1);   border: 1px solid rgba(245,80,54,0.3);   }
+  .m-groq     .model-name { color: #F55036; }
+  .m-cerebras { background: rgba(139,92,246,0.1);  border: 1px solid rgba(139,92,246,0.3);  }
+  .m-cerebras .model-name { color: #8B5CF6; }
+  .m-gemini   { background: rgba(66,133,244,0.1);  border: 1px solid rgba(66,133,244,0.3);  }
+  .m-gemini   .model-name { color: #4285F4; }
+  .m-nvidia   { background: rgba(118,185,0,0.1);   border: 1px solid rgba(118,185,0,0.3);   }
+  .m-nvidia   .model-name { color: #76B900; }
+  .m-deepseek { background: rgba(0,196,255,0.1);   border: 1px solid rgba(0,196,255,0.3);   }
+  .m-deepseek .model-name { color: #00C4FF; }
+  .m-mistral  { background: rgba(255,112,0,0.1);   border: 1px solid rgba(255,112,0,0.3);   }
+  .m-mistral  .model-name { color: #FF7000; }
+
+  /* ── Context pills ── */
+  .context-row {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .context-pill {
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    justify-content: center;
+    min-width: 160px;
+  }
+  .pill-profile { background: rgba(0,232,150,0.1); border: 1px solid rgba(0,232,150,0.3); color: #00e896; }
+  .pill-skills  { background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.3); color: #00d4ff; }
+  .pill-memory  { background: rgba(139,92,246,0.1);border: 1px solid rgba(139,92,246,0.3);color: #a78bfa; }
+
+  /* ── Tier split ── */
+  .tier-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    width: 100%;
+  }
+  .tier-box {
+    border-radius: 10px;
+    padding: 12px 14px;
+    text-align: center;
+  }
+  .tier-box .tier-name { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+  .tier-box .tier-when { font-size: 10px; opacity: 0.65; margin-bottom: 6px; line-height: 1.4; }
+  .tier-box .tier-models { font-size: 11px; font-weight: 600; }
+
+  .t1 { background: rgba(0,212,255,0.07); border: 1px solid rgba(0,212,255,0.25); }
+  .t1 .tier-name, .t1 .tier-models { color: #00d4ff; }
+  .t2 { background: rgba(0,232,150,0.07); border: 1px solid rgba(0,232,150,0.25); }
+  .t2 .tier-name, .t2 .tier-models { color: #00e896; }
+  .t3 { background: rgba(255,123,0,0.07);  border: 1px solid rgba(255,123,0,0.25);  }
+  .t3 .tier-name, .t3 .tier-models { color: #ff7b00; }
+
+  /* ── Merge box ── */
+  .merge-inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  .merge-case {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .merge-badge {
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .mb-0 { background: rgba(255,68,68,0.15); color: #ff4444; border: 1px solid rgba(255,68,68,0.3); }
+  .mb-1 { background: rgba(0,212,255,0.15); color: #00d4ff; border: 1px solid rgba(0,212,255,0.3); }
+  .mb-2 { background: rgba(0,232,150,0.15); color: #00e896; border: 1px solid rgba(0,232,150,0.3); }
+
+  /* ── Storage row ── */
+  .storage-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    width: 100%;
+  }
+  .store-box {
+    border-radius: 10px;
+    padding: 12px 14px;
+    text-align: center;
+    background: rgba(26,37,48,0.6);
+    border: 1px solid #1e2d3d;
+  }
+  .store-box .store-icon { font-size: 20px; margin-bottom: 5px; }
+  .store-box .store-name { font-size: 11px; font-weight: 700; color: #7a9ab4; margin-bottom: 3px; }
+  .store-box .store-desc { font-size: 10px; color: #4a6478; line-height: 1.4; }
+
+  /* ── Section labels ── */
+  .section-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #2a4060;
+    text-align: center;
+    margin: 2px 0;
+    font-weight: 600;
+  }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid #1e2d3d;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #4a6478;
+  }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+</style>
+</head>
+<body>
+
+<h1>⬡ How NeuConX Works</h1>
+<p class="subtitle">From "you type a message" to "you get a smarter answer" — in plain English</p>
+
+<div class="flow">
+
+  <!-- STEP 1: You -->
+  <div class="box cyan" style="max-width:420px;">
+    <div class="box-title">💬 You Type a Message</div>
+    <div class="box-desc">Anything — a question, a coding request, an essay, "hello".<br>NeuConX reads it and decides what to do next.</div>
+  </div>
+
+  <div class="arrow"><div class="arrow-line"></div><div class="arrow-head"></div><div class="arrow-label">enriched with context</div></div>
+
+  <!-- STEP 2: Context Assembly -->
+  <div class="box purple" style="max-width:620px;">
+    <div class="box-title">🧠 Your Message Gets Enriched</div>
+    <div class="box-desc">Before sending to any AI, NeuConX attaches context so responses feel personal.</div>
+    <div class="context-row" style="margin-top:12px;">
+      <div class="context-pill pill-profile">👤 Your Profile<br><span style="font-weight:400;font-size:10px;">Name, career, goals, location</span></div>
+      <div class="context-pill pill-skills">⚡ Active Skills<br><span style="font-weight:400;font-size:10px;">Humanizer, Coder, etc.</span></div>
+      <div class="context-pill pill-memory">🔍 Past Conversations<br><span style="font-weight:400;font-size:10px;">Relevant history via ChromaDB</span></div>
+    </div>
+  </div>
+
+  <div class="arrow"><div class="arrow-line"></div><div class="arrow-head"></div><div class="arrow-label">classified locally — 0 tokens used</div></div>
+
+  <!-- STEP 3: Smart Router -->
+  <div class="box orange" style="max-width:620px;">
+    <div class="box-title">🔀 Smart Router Decides How Many Models to Use</div>
+    <div class="box-desc">NeuConX reads your message and classifies it — no API call, instant, free.</div>
+    <div class="tier-row" style="margin-top:12px;">
+      <div class="tier-box t1">
+        <div class="tier-name">⚡ Quick</div>
+        <div class="tier-when">Short questions<br>"Hello", "What is X?"<br>≤8 words</div>
+        <div class="tier-models">1 Model</div>
+      </div>
+      <div class="tier-box t2">
+        <div class="tier-name">⚖ Balanced</div>
+        <div class="tier-when">Medium questions<br>Some context needed<br>9–40 words</div>
+        <div class="tier-models">2 Models</div>
+      </div>
+      <div class="tier-box t3">
+        <div class="tier-name">🔥 Deep</div>
+        <div class="tier-when">Complex requests<br>Code, essays, analysis<br>&gt;40 words or keywords</div>
+        <div class="tier-models">All Models</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><div class="arrow-line"></div><div class="arrow-head"></div><div class="arrow-label">sent simultaneously in parallel</div></div>
+
+  <!-- STEP 4: Models -->
+  <div class="box blue" style="max-width:760px;">
+    <div class="box-title">🤖 Free AI Models Answer in Parallel</div>
+    <div class="box-desc" style="margin-bottom:12px;">All selected models receive your enriched message at the same time — no waiting in line.</div>
+    <div class="model-grid">
+      <div class="model-card m-groq">
+        <div class="model-name">⚡ Groq</div>
+        <div class="model-detail">Llama 3.3 70B<br>Fastest · Free<br>Used first always</div>
+      </div>
+      <div class="model-card m-cerebras">
+        <div class="model-name">⚡ Cerebras</div>
+        <div class="model-detail">Llama 3.3 70B<br>Fast · Free<br>Used second</div>
+      </div>
+      <div class="model-card m-gemini">
+        <div class="model-name">Gemini</div>
+        <div class="model-detail">Gemini 2.0 Flash<br>1,500/day · Free<br>Used third</div>
+      </div>
+      <div class="model-card m-nvidia">
+        <div class="model-name">NVIDIA NIM</div>
+        <div class="model-detail">Llama 3.3 70B<br>40/min · Free</div>
+      </div>
+      <div class="model-card m-deepseek">
+        <div class="model-name">DeepSeek</div>
+        <div class="model-detail">via OpenRouter<br>Free credits</div>
+      </div>
+      <div class="model-card m-mistral">
+        <div class="model-name">Mistral</div>
+        <div class="model-detail">7B via OpenRouter<br>Free credits</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><div class="arrow-line"></div><div class="arrow-head"></div><div class="arrow-label">responses collected</div></div>
+
+  <!-- STEP 5: Merge -->
+  <div class="box green" style="max-width:640px;">
+    <div class="box-title">🔗 Merge Engine Combines the Answers</div>
+    <div class="box-desc">Acts like a smart editor — keeps unique insights, removes repetition, never adds new information.</div>
+    <div class="merge-inner">
+      <div class="merge-case">
+        <span class="merge-badge mb-0">0 answers</span>
+        <span style="color:#4a6478;">→ Error + fix instructions</span>
+      </div>
+      <div class="merge-case">
+        <span class="merge-badge mb-1">1 answer</span>
+        <span style="color:#4a6478;">→ Passed through directly</span>
+      </div>
+      <div class="merge-case">
+        <span class="merge-badge mb-2">2+ answers</span>
+        <span style="color:#4a6478;">→ Merged by Groq (fastest)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><div class="arrow-line"></div><div class="arrow-head"></div><div class="arrow-label">final answer delivered</div></div>
+
+  <!-- STEP 6: You get answer -->
+  <div class="box cyan" style="max-width:420px;">
+    <div class="box-title">✅ You See One Clean Answer</div>
+    <div class="box-desc">Personalised to you. Deduplicated. Right panel shows each model's individual response if you're curious.</div>
+  </div>
+
+  <div class="arrow"><div class="arrow-line"></div><div class="arrow-head"></div><div class="arrow-label">auto-saved locally</div></div>
+
+  <!-- STEP 7: Memory -->
+  <div class="box purple" style="max-width:720px;">
+    <div class="box-title">💾 Everything is Saved Locally on Your Machine</div>
+    <div class="box-desc" style="margin-bottom:12px;">Nothing goes to any server except the API calls. Your data stays yours.</div>
+    <div class="storage-row">
+      <div class="store-box">
+        <div class="store-icon">💬</div>
+        <div class="store-name">Conversations</div>
+        <div class="store-desc">Every chat saved as JSON in data/conversations/</div>
+      </div>
+      <div class="store-box">
+        <div class="store-icon">👤</div>
+        <div class="store-name">Your Profile</div>
+        <div class="store-desc">Onboarding answers + AI-learned facts in profile.json</div>
+      </div>
+      <div class="store-box">
+        <div class="store-icon">🧠</div>
+        <div class="store-name">Vector Memory</div>
+        <div class="store-desc">ChromaDB embeddings in memory/ for semantic search</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div>You / Input / Output</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#a78bfa"></div>Context & Memory</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ff7b00"></div>Routing Decision</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#6ba3f7"></div>AI Models</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#00e896"></div>Merge Engine</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#4a6478"></div>Local Storage</div>
+</div>
+
+</body>
+</html>
