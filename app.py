@@ -365,37 +365,61 @@ LONGFORM_KEYWORDS = {
     'all', 'generate', 'create', 'build', 'implement', 'clone'
 }
 
+# Queries that typically produce very long structured responses
+DEEPFORM_KEYWORDS = {
+    'roadmap', 'curriculum', 'plan', 'strategy', 'guide', 'tutorial',
+    'step by step', 'step-by-step', 'how to become', 'how do i become',
+    'career', 'transition', 'switch', 'pivot', 'learn', 'learning path',
+    'week', 'month', 'phase', 'syllabus', 'course', 'breakdown',
+    'comprehensive', 'detailed', 'in-depth', 'thorough', 'exhaustive',
+    'compare', 'comparison', 'difference between', 'pros and cons',
+    'architecture', 'design', 'system', 'pipeline', 'workflow',
+}
+
 def estimate_max_tokens(prompt: str) -> int:
     """
     Dynamically set max_tokens based on what the user is asking for.
-    Conservative limits to avoid rate limiting on free tiers.
 
-    Groq free: ~6000 tokens/min total (input+output combined)
-    Cerebras free: 60 req/min
-    So we keep output tokens reasonable to stay within limits.
+    Token limits by tier:
+    - Groq free: ~6,000 tokens/min (input + output combined)
+    - Cerebras free: 60 req/min
+    - NVIDIA NIM: generous limits
+    - OpenRouter free: varies per model
+
+    We detect the response complexity needed and allocate accordingly.
     """
     lower = prompt.lower()
     words = lower.split()
+    n = len(words)
 
-    # Very explicit long-form: full HTML pages, complete essays, full code files
-    explicit_long = {'html', 'css', 'full', 'complete', 'entire', 'whole', 'all'}
-    if any(k in lower for k in explicit_long) and len(words) > 10:
-        return 4096  # Was 8192 — too high, causes rate limits
+    # Deep structured responses: roadmaps, career plans, comparisons, tutorials
+    if any(k in lower for k in DEEPFORM_KEYWORDS):
+        return 8192
+
+    # Explicit long-form: full HTML, complete essays, entire documents
+    explicit_long = {'html', 'css', 'full', 'complete', 'entire', 'whole'}
+    if any(k in lower for k in explicit_long) and n > 10:
+        return 6144
 
     # Code / technical content
-    code_keywords = {'code', 'script', 'function', 'class', 'implement', 'write', 'build', 'create', 'generate'}
+    code_keywords = {'code', 'script', 'function', 'class', 'implement',
+                     'write', 'build', 'create', 'generate', 'program'}
     if any(k in lower for k in code_keywords):
-        return 2048
+        return 4096
 
-    # Long prompts
-    if len(words) > 50:
+    # Long detailed prompts usually expect detailed answers
+    if n > 80:
+        return 6144
+    if n > 40:
+        return 4096
+    if n > 20:
         return 2048
 
     # Short conversational
-    if len(words) <= 15:
+    if n <= 10:
         return 1024
 
-    return 1536  # Default — was 2048, slightly lower to reduce rate limit hits
+    return 2048  # Default
 
 
 def classify_query(text: str) -> str:
@@ -983,7 +1007,33 @@ def chat():
                 return {'model': model_id, 'provider': provider,
                         'response': '', 'error': err}
 
-        result = _call_pinned(pinned_provider, pinned_model_id, message, history, keys)
+        # Respect personalization toggle for pinned model too
+        personalized_pin = bool(data.get('personalized', True))
+
+        # Build enriched prompt with profile if personalized
+        pin_prompt = message
+        if personalized_pin and PROFILE_FILE.exists():
+            try:
+                profile = json.loads(PROFILE_FILE.read_text(encoding='utf-8'))
+                profile_lines = []
+                field_labels = {
+                    'identity': 'Name/Location', 'education': 'Education',
+                    'career': 'Career', 'goals': 'Goals', 'projects': 'Projects',
+                }
+                for key_f, label in field_labels.items():
+                    val = profile.get(key_f)
+                    if val and isinstance(val, str) and val.strip():
+                        profile_lines.append(f"- {label}: {val[:200]}")
+                facts = profile.get('learned_facts', [])
+                if facts:
+                    profile_lines.append(f"- Known facts: {'; '.join(facts[:10])}")
+                if profile_lines:
+                    profile_block = "ABOUT THE USER:\n" + "\n".join(profile_lines)
+                    pin_prompt = f"{profile_block}\n\n---\n\nUser message: {message}"
+            except Exception:
+                pass
+
+        result = _call_pinned(pinned_provider, pinned_model_id, pin_prompt, history, keys)
         final  = result.get('response') or f"⚠️ {result.get('error', 'No response')}"
 
         memory.append(sess_id, 'user', message)
@@ -999,7 +1049,7 @@ def chat():
             'tier_used':       'pinned',
             'models_used':     1 if result.get('response') else 0,
             'models_called':   [pinned_model_id],
-            'personalized':    False,
+            'personalized':    personalized_pin,
             'humanized':       False
         })
 
@@ -1112,6 +1162,8 @@ def chat():
                 return call_groq(enriched, history, keys)
             elif model_key == 'cerebras':
                 return call_cerebras(enriched, history, keys)
+            elif model_key == 'ollama':
+                return call_ollama(enriched, history, keys)
             return {'model': model_key, 'response': '', 'error': 'Unknown model'}
 
         r = _call()
@@ -1133,8 +1185,46 @@ def chat():
     for t in threads: t.join(timeout=35)
 
     responses = list(results.values())
-    final    = merge_responses(message, responses, keys)
-    humanized = False  # kept for backward compat, always False now
+    # Feature 4: Merge Engine or AI Judge
+    app_settings = load_neuconx_settings()
+    if app_settings.get('merge_engine_enabled', True):
+        # Default: merge engine combines all responses
+        final = merge_responses(message, responses, keys)
+    else:
+        # AI Judge mode: pick the best single response
+        judge_provider = app_settings.get('judge_provider', 'groq')
+        judge_model    = app_settings.get('judge_model', '')
+        valid_responses = [r for r in responses if r.get('response') and not r.get('error')]
+
+        if not valid_responses:
+            final = "⚠️ No valid responses received."
+        elif len(valid_responses) == 1:
+            final = valid_responses[0]['response']
+        else:
+            # Build judge prompt
+            candidates = "\n\n".join([
+                f"--- Response from {r['model']} ---\n{r['response'][:2000]}"
+                for r in valid_responses
+            ])
+            judge_prompt = (
+                f"You are a judge evaluating AI responses. Pick the BEST response to this question:\n\n"
+                f"QUESTION: {sanitize_input(message, 500)}\n\n"
+                f"{candidates}\n\n"
+                f"Return ONLY the best response text verbatim. Do not add commentary."
+            )
+            if judge_provider == 'groq':
+                judge_result = call_groq(judge_prompt, [], keys)
+            elif judge_provider == 'cerebras':
+                judge_result = call_cerebras(judge_prompt, [], keys)
+            elif judge_provider == 'gemini':
+                judge_result = call_gemini(judge_prompt, [], keys)
+            elif judge_provider == 'ollama':
+                judge_result = call_ollama(judge_prompt, [], keys, judge_model)
+            else:
+                judge_result = call_groq(judge_prompt, [], keys)
+            final = judge_result.get('response') or valid_responses[0]['response']
+
+    humanized = False  # kept for backward compat
 
     # Phase 3: Store in session memory
     memory.append(sess_id, 'user', message)
@@ -2252,13 +2342,13 @@ def get_available_models():
             'https://openrouter.ai/api/v1/models',
             keys['openrouter'], 'openrouter'
         )
-        # OpenRouter returns 500+ models — keep only free ones (:free suffix)
-        # and well-known ones to avoid overwhelming the dropdown
-        free_models = [m for m in models if m['id'].endswith(':free')]
-        if free_models:
-            all_models.extend(free_models)
+        # Apply free filter based on user setting
+        app_cfg = load_neuconx_settings()
+        if app_cfg.get('free_models_only', True):
+            free_models = [m for m in models if m['id'].endswith(':free')]
+            all_models.extend(free_models if free_models else models[:30])
         else:
-            all_models.extend(models[:30])  # fallback: first 30
+            all_models.extend(models)  # All models including paid
 
     # Gemini — different endpoint
     if keys.get('gemini'):
@@ -2270,6 +2360,226 @@ def get_available_models():
         'count':   len(all_models),
         'providers': list({m['provider'] for m in all_models})
     })
+
+
+# ── Feature 1: API Key Validation Endpoint ────────────────────────────────────
+
+@app.route('/api/keys/validate', methods=['POST'])
+@limiter.limit("10 per minute")
+def validate_api_key():
+    """
+    Validate a single API key by calling its /models endpoint.
+    Returns model count and model list for tooltip display.
+    """
+    if not csrf_valid():
+        abort(403)
+    data = request.get_json(silent=True)
+    if not data:
+        abort(400)
+
+    provider = sanitize_input(str(data.get('provider', '')), 50).lower()
+    key      = sanitize_input(str(data.get('key', '')), 500)
+
+    if not key or not provider:
+        return jsonify({'valid': False, 'error': 'Provider and key required'}), 400
+
+    models = []
+    error  = None
+
+    try:
+        if provider == 'groq':
+            r = http_req.get('https://api.groq.com/openai/v1/models',
+                headers={'Authorization': f'Bearer {key}'}, timeout=8)
+            r.raise_for_status()
+            models = [m['id'] for m in r.json().get('data', [])]
+
+        elif provider == 'cerebras':
+            r = http_req.get('https://api.cerebras.ai/v1/models',
+                headers={'Authorization': f'Bearer {key}'}, timeout=8)
+            r.raise_for_status()
+            models = [m['id'] for m in r.json().get('data', [])]
+
+        elif provider == 'nvidia':
+            r = http_req.get('https://integrate.api.nvidia.com/v1/models',
+                headers={'Authorization': f'Bearer {key}'}, timeout=8)
+            r.raise_for_status()
+            models = [m['id'] for m in r.json().get('data', [])]
+
+        elif provider == 'openrouter':
+            r = http_req.get('https://openrouter.ai/api/v1/models',
+                headers={'Authorization': f'Bearer {key}'}, timeout=8)
+            r.raise_for_status()
+            all_m = r.json().get('data', [])
+            app_cfg = load_neuconx_settings()
+            if app_cfg.get('free_models_only', True):
+                models = [m['id'] for m in all_m if m.get('id','').endswith(':free')]
+                if not models:
+                    models = [m['id'] for m in all_m[:20]]
+            else:
+                models = [m['id'] for m in all_m]
+
+        elif provider == 'gemini':
+            r = http_req.get(
+                f'https://generativelanguage.googleapis.com/v1beta/models?key={key}',
+                timeout=8)
+            r.raise_for_status()
+            models = [m['name'].replace('models/','') for m in r.json().get('models',[])
+                      if 'generateContent' in m.get('supportedGenerationMethods', [])]
+
+        elif provider == 'ollama':
+            base = sanitize_input(str(data.get('base_url', 'http://localhost:11434')), 200)
+            r = http_req.get(f'{base}/api/tags', timeout=5)
+            r.raise_for_status()
+            models = [m['name'] for m in r.json().get('models', [])]
+
+        else:
+            return jsonify({'valid': False, 'error': f'Unknown provider: {provider}'}), 400
+
+    except Exception as e:
+        err_str = str(e)
+        if '401' in err_str or 'unauthorized' in err_str.lower():
+            error = 'Invalid API key'
+        elif '403' in err_str:
+            error = 'Access denied'
+        elif 'timeout' in err_str.lower() or 'connection' in err_str.lower():
+            error = 'Connection failed — check URL or network'
+        else:
+            error = f'Validation failed: {type(e).__name__}'
+        return jsonify({'valid': False, 'error': error, 'models': []}), 200
+
+    return jsonify({
+        'valid':       True,
+        'count':       len(models),
+        'models':      models[:50],   # Cap at 50 for tooltip
+        'provider':    provider
+    })
+
+
+# ── Feature 2: Model count for header dots ────────────────────────────────────
+
+@app.route('/api/models/counts', methods=['GET'])
+@limiter.limit("5 per minute")
+def get_model_counts():
+    """Return model counts per provider for header dot tooltips.
+    Uses identical filtering as /api/models/available so counts match the dropdown."""
+    keys  = get_keys()
+    counts = {}
+    provider_endpoints = {
+        'groq':       ('https://api.groq.com/openai/v1/models',     keys.get('groq','')),
+        'cerebras':   ('https://api.cerebras.ai/v1/models',          keys.get('cerebras','')),
+        'nvidia':     ('https://integrate.api.nvidia.com/v1/models', keys.get('nvidia','')),
+        'gemini':     (None,                                          keys.get('gemini','')),
+        'openrouter': ('https://openrouter.ai/api/v1/models',        keys.get('openrouter','')),
+    }
+    for provider, (url, key) in provider_endpoints.items():
+        if not key:
+            counts[provider] = 0
+            continue
+        try:
+            if provider == 'gemini':
+                models = _fetch_gemini_models(key)
+            elif provider == 'openrouter':
+                all_models_raw = _fetch_models_from_url(url, key, provider)
+                app_cfg = load_neuconx_settings()
+                if app_cfg.get('free_models_only', True):
+                    models = [m for m in all_models_raw if m['id'].endswith(':free')]
+                    if not models:
+                        models = all_models_raw[:30]
+                else:
+                    models = all_models_raw
+            else:
+                models = _fetch_models_from_url(url, key, provider)
+            counts[provider] = len(models)
+        except Exception:
+            counts[provider] = -1
+    return jsonify(counts)
+
+
+# ── Feature 4: Settings persistence (merge engine + judge) ───────────────────
+
+SETTINGS_FILE = BASE_DIR / 'data' / 'neuconx_settings.json'
+
+def load_neuconx_settings() -> dict:
+    defaults = {
+        'merge_engine_enabled': True,
+        'judge_model':          'groq',
+        'judge_provider':       'groq',
+        'free_models_only':     True,   # default ON — honour the golden rule
+    }
+    if not SETTINGS_FILE.exists():
+        return defaults
+    try:
+        saved = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+        return {**defaults, **saved}
+    except Exception:
+        return defaults
+
+
+@app.route('/api/neuconx-settings', methods=['GET'])
+@limiter.limit("20 per minute")
+def get_neuconx_settings():
+    return jsonify(load_neuconx_settings())
+
+
+@app.route('/api/neuconx-settings', methods=['POST'])
+@limiter.limit("10 per minute")
+def save_neuconx_settings():
+    if not csrf_valid():
+        abort(403)
+    data = request.get_json(silent=True)
+    if not data:
+        abort(400)
+    current = load_neuconx_settings()
+    if 'merge_engine_enabled' in data:
+        current['merge_engine_enabled'] = bool(data['merge_engine_enabled'])
+    if 'judge_model' in data:
+        current['judge_model'] = sanitize_input(str(data['judge_model']), 200)
+    if 'judge_provider' in data:
+        current['judge_provider'] = sanitize_input(str(data['judge_provider']), 50)
+    if 'free_models_only' in data:
+        current['free_models_only'] = bool(data['free_models_only'])
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding='utf-8')
+    return jsonify({'status': 'saved', **current})
+
+
+# ── Feature 5: Ollama support ─────────────────────────────────────────────────
+
+def call_ollama(prompt: str, history: list, keys: dict, model_id: str = '') -> dict:
+    """
+    Call Ollama local server via OpenAI-compatible endpoint.
+    No API key needed — just a running Ollama instance.
+    """
+    base_url = keys.get('ollama_base_url', 'http://localhost:11434')
+    model    = model_id or keys.get('ollama_model', 'llama3.2')
+
+    if not model:
+        return {'model': f'ollama:{model}', 'response': '',
+                'error': 'No Ollama model configured — add model name in Settings'}
+
+    try:
+        r = http_req.post(
+            f'{base_url}/v1/chat/completions',
+            headers={'Content-Type': 'application/json'},
+            json={
+                'model': model,
+                'messages': _safe_history(history) + [
+                    {'role': 'user', 'content': sanitize_input(prompt, 4000)}
+                ],
+                'stream': False
+            },
+            timeout=120   # Local models can be slow
+        )
+        r.raise_for_status()
+        content = r.json()['choices'][0]['message']['content']
+        return {'model': f'ollama:{model}', 'response': content, 'error': None}
+    except Exception as e:
+        err = str(e)
+        if 'connection' in err.lower() or 'refused' in err.lower():
+            return {'model': f'ollama:{model}', 'response': '',
+                    'error': 'Ollama not running — start with: ollama serve'}
+        return {'model': f'ollama:{model}', 'response': '',
+                'error': f'Ollama error: {type(e).__name__}: {err[:80]}'}
 
 # ── Error Handlers ─────────────────────────────────────────────────────────────
 

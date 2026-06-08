@@ -157,135 +157,346 @@
 
 <!-- ── Settings Modal ────────────────────────────────────────────────────── -->
 <div id="settings-modal" class="modal hidden">
-  <div class="modal-card settings-card">
+  <div class="modal-card settings-card-v2">
+
+    <!-- Modal Header -->
     <div class="modal-header">
-      <h3>⚙ Settings</h3>
+      <h3>⚙ NeuConX Settings</h3>
       <button class="modal-close" onclick="hideSettings()">×</button>
     </div>
-    <div class="modal-body">
-      <p class="settings-note">
-        🔒 Keys stored in your local <code>.env</code> file only. Never leave your machine except for direct API calls. <strong>No restart needed</strong> after saving.
-      </p>
 
-      <div class="keys-grid">
-        <!-- Gemini -->
-        <div class="key-row">
-          <div class="key-info">
-            <span class="key-name">Gemini 2.0 Flash</span>
-            <span id="gemini-status" class="key-status"></span>
-          </div>
-          <input type="password" id="gemini-key" class="settings-input" placeholder="AIza..." autocomplete="off">
-          <small>Free 1,500 req/day · <a href="https://aistudio.google.com" target="_blank" rel="noopener">aistudio.google.com</a></small>
-        </div>
-
-        <!-- Groq -->
-        <div class="key-row">
-          <div class="key-info">
-            <span class="key-name">Groq <span class="badge-fast">⚡ Fastest</span></span>
-            <span id="groq-status" class="key-status"></span>
-          </div>
-          <input type="password" id="groq-key" class="settings-input" placeholder="gsk_..." autocomplete="off">
-          <small>Free · Llama 3.3 70B · <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a></small>
-        </div>
-
-        <!-- Cerebras -->
-        <div class="key-row">
-          <div class="key-info">
-            <span class="key-name">Cerebras <span class="badge-fast">⚡ Fast</span></span>
-            <span id="cerebras-status" class="key-status"></span>
-          </div>
-          <input type="password" id="cerebras-key" class="settings-input" placeholder="csk-..." autocomplete="off">
-          <small>Free · Llama 3.3 70B · <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener">cloud.cerebras.ai</a></small>
-        </div>
-
-        <!-- NVIDIA -->
-        <div class="key-row">
-          <div class="key-info">
-            <span class="key-name">NVIDIA NIM</span>
-            <span id="nvidia-status" class="key-status"></span>
-          </div>
-          <input type="password" id="nvidia-key" class="settings-input" placeholder="nvapi-..." autocomplete="off">
-          <small>Free 40 req/min · Llama 3.3 70B · <a href="https://build.nvidia.com" target="_blank" rel="noopener">build.nvidia.com</a></small>
-        </div>
-
-        <!-- OpenRouter -->
-        <div class="key-row">
-          <div class="key-info">
-            <span class="key-name">OpenRouter <span class="badge-multi">DeepSeek + Mistral</span></span>
-            <span id="openrouter-status" class="key-status"></span>
-          </div>
-          <input type="password" id="openrouter-key" class="settings-input" placeholder="sk-or-..." autocomplete="off">
-          <small>Free credits · <a href="https://openrouter.ai" target="_blank" rel="noopener">openrouter.ai</a></small>
-        </div>
-      </div>
-
-      <div class="settings-actions">
-        <button class="btn-primary" onclick="saveSettings()">💾 Save Keys</button>
-        <div id="settings-msg" class="settings-msg hidden"></div>
-      </div>
-
-      <div class="settings-tip">
-        💡 <strong>Tip:</strong> Add Groq or Cerebras to fix "Resource exhausted" from Gemini. They're faster and have generous free tiers.
-      </div>
-
-      <!-- ── Reset Section ─────────────────────────────────────────── -->
-      <div class="reset-section">
-        <div class="reset-title">⚠ Reset Options</div>
-        <div class="reset-grid">
-
-          <div class="reset-row">
-            <div class="reset-info">
-              <span class="reset-label">Onboarding</span>
-              <span class="reset-desc">Redo the 7-step setup wizard</span>
-            </div>
-            <button class="reset-btn" onclick="resetOnboarding()">Reset</button>
-          </div>
-
-          <div class="reset-row">
-            <div class="reset-info">
-              <span class="reset-label">Session Memory</span>
-              <span class="reset-desc">Clear in-memory chat context</span>
-            </div>
-            <button class="reset-btn" onclick="resetSessionMemory()">Reset</button>
-          </div>
-
-          <div class="reset-row">
-            <div class="reset-info">
-              <span class="reset-label">Conversations</span>
-              <span class="reset-desc">Delete all saved chat history</span>
-            </div>
-            <button class="reset-btn reset-btn-danger" onclick="resetConversations()">Delete All</button>
-          </div>
-
-          <div class="reset-row">
-            <div class="reset-info">
-              <span class="reset-label">Learned Profile</span>
-              <span class="reset-desc">Wipe AI-learned facts about you</span>
-            </div>
-            <button class="reset-btn reset-btn-danger" onclick="resetLearnedProfile()">Delete</button>
-          </div>
-
-          <div class="reset-row">
-            <div class="reset-info">
-              <span class="reset-label">API Keys</span>
-              <span class="reset-desc">Remove all keys from .env</span>
-            </div>
-            <button class="reset-btn reset-btn-danger" onclick="resetAPIKeys()">Wipe Keys</button>
-          </div>
-
-          <div class="reset-row">
-            <div class="reset-info">
-              <span class="reset-label">Factory Reset</span>
-              <span class="reset-desc">Wipe everything — fresh start</span>
-            </div>
-            <button class="reset-btn reset-btn-nuclear" onclick="factoryReset()">☢ Full Reset</button>
-          </div>
-
-        </div>
-        <div id="reset-msg" class="settings-msg hidden" style="margin-top:10px;"></div>
-      </div>
-
+    <!-- Tab Bar -->
+    <div class="settings-tabs">
+      <button class="stab active" onclick="switchSettingsTab('providers',this)">🔑 API Providers</button>
+      <button class="stab" onclick="switchSettingsTab('local',this)">🖥 Local Models</button>
+      <button class="stab" onclick="switchSettingsTab('engine',this)">⚙ Engine</button>
+      <button class="stab" onclick="switchSettingsTab('reset',this)">⚠ Reset</button>
     </div>
+
+    <div class="modal-body settings-body-v2">
+
+      <!-- ── TAB: API Providers ─────────────────────────────────────── -->
+      <div id="stab-providers" class="stab-content active">
+        <p class="settings-note">
+          🔒 Keys stored in your local <code>.env</code> file only. Never leave your machine except for direct API calls. <strong>No restart needed</strong> after saving.
+        </p>
+
+        <!-- Provider rows -->
+        <div class="provider-table">
+
+          <!-- Header row -->
+          <div class="provider-header">
+            <div>Provider</div>
+            <div>API Key</div>
+            <div>Status / Models</div>
+            <div>Validate</div>
+          </div>
+
+          <!-- Gemini -->
+          <div class="provider-row">
+            <div class="provider-meta">
+              <span class="provider-name">Google Gemini</span>
+              <span class="provider-note">Free · 1,500 req/day</span>
+              <a href="https://aistudio.google.com" target="_blank" rel="noopener" class="provider-link">aistudio.google.com ↗</a>
+            </div>
+            <div class="provider-key-wrap">
+              <input type="password" id="gemini-key" class="settings-input provider-key-input"
+                placeholder="AIza..." autocomplete="off"
+                oninput="clearValidation('gemini')">
+              <span id="gemini-status" class="key-status"></span>
+            </div>
+            <div class="provider-validation">
+              <span id="gemini-val-count" class="val-count hidden" title=""></span>
+            </div>
+            <div>
+              <button class="validate-btn" onclick="validateKey('gemini')">Validate</button>
+            </div>
+          </div>
+
+          <!-- Groq -->
+          <div class="provider-row">
+            <div class="provider-meta">
+              <span class="provider-name">Groq <span class="badge-fast">⚡ Fastest</span></span>
+              <span class="provider-note">Free · Llama 3.3 70B</span>
+              <a href="https://console.groq.com" target="_blank" rel="noopener" class="provider-link">console.groq.com ↗</a>
+            </div>
+            <div class="provider-key-wrap">
+              <input type="password" id="groq-key" class="settings-input provider-key-input"
+                placeholder="gsk_..." autocomplete="off"
+                oninput="clearValidation('groq')">
+              <span id="groq-status" class="key-status"></span>
+            </div>
+            <div class="provider-validation">
+              <span id="groq-val-count" class="val-count hidden" title=""></span>
+            </div>
+            <div>
+              <button class="validate-btn" onclick="validateKey('groq')">Validate</button>
+            </div>
+          </div>
+
+          <!-- Cerebras -->
+          <div class="provider-row">
+            <div class="provider-meta">
+              <span class="provider-name">Cerebras <span class="badge-fast">⚡ Fast</span></span>
+              <span class="provider-note">Free · 60 req/min</span>
+              <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener" class="provider-link">cloud.cerebras.ai ↗</a>
+            </div>
+            <div class="provider-key-wrap">
+              <input type="password" id="cerebras-key" class="settings-input provider-key-input"
+                placeholder="csk-..." autocomplete="off"
+                oninput="clearValidation('cerebras')">
+              <span id="cerebras-status" class="key-status"></span>
+            </div>
+            <div class="provider-validation">
+              <span id="cerebras-val-count" class="val-count hidden" title=""></span>
+            </div>
+            <div>
+              <button class="validate-btn" onclick="validateKey('cerebras')">Validate</button>
+            </div>
+          </div>
+
+          <!-- NVIDIA -->
+          <div class="provider-row">
+            <div class="provider-meta">
+              <span class="provider-name">NVIDIA NIM</span>
+              <span class="provider-note">Free · 40 req/min</span>
+              <a href="https://build.nvidia.com" target="_blank" rel="noopener" class="provider-link">build.nvidia.com ↗</a>
+            </div>
+            <div class="provider-key-wrap">
+              <input type="password" id="nvidia-key" class="settings-input provider-key-input"
+                placeholder="nvapi-..." autocomplete="off"
+                oninput="clearValidation('nvidia')">
+              <span id="nvidia-status" class="key-status"></span>
+            </div>
+            <div class="provider-validation">
+              <span id="nvidia-val-count" class="val-count hidden" title=""></span>
+            </div>
+            <div>
+              <button class="validate-btn" onclick="validateKey('nvidia')">Validate</button>
+            </div>
+          </div>
+
+          <!-- OpenRouter -->
+          <div class="provider-row">
+            <div class="provider-meta">
+              <span class="provider-name">OpenRouter</span>
+              <span class="provider-note">Free tier models available</span>
+              <a href="https://openrouter.ai" target="_blank" rel="noopener" class="provider-link">openrouter.ai ↗</a>
+            </div>
+            <div class="provider-key-wrap">
+              <input type="password" id="openrouter-key" class="settings-input provider-key-input"
+                placeholder="sk-or-..." autocomplete="off"
+                oninput="clearValidation('openrouter')">
+              <span id="openrouter-status" class="key-status"></span>
+            </div>
+            <div class="provider-validation">
+              <span id="openrouter-val-count" class="val-count hidden" title=""></span>
+            </div>
+            <div>
+              <button class="validate-btn" onclick="validateKey('openrouter')">Validate</button>
+            </div>
+          </div>
+
+        </div><!-- end provider-table -->
+
+        <div class="settings-actions">
+          <button class="btn-primary" onclick="saveSettings()">💾 Save All Keys</button>
+          <div id="settings-msg" class="settings-msg hidden"></div>
+        </div>
+
+        <div class="settings-tip">
+          💡 <strong>Tip:</strong> Add Groq or Cerebras to fix Gemini quota errors. They're faster and have generous free tiers.
+        </div>
+      </div>
+
+      <!-- ── TAB: Local Models ───────────────────────────────────────── -->
+      <div id="stab-local" class="stab-content hidden">
+
+        <!-- Ollama Section -->
+        <div class="local-section">
+          <div class="local-section-header">
+            <span class="local-name">🦙 Ollama</span>
+            <span class="local-badge">Local · No API key needed</span>
+          </div>
+
+          <div class="hardware-req">
+            <div class="hw-title">⚙ Hardware Requirements</div>
+            <div class="hw-grid">
+              <div class="hw-item">
+                <span class="hw-label">7B models</span>
+                <span class="hw-val">8GB RAM / 6GB VRAM</span>
+              </div>
+              <div class="hw-item">
+                <span class="hw-label">13B models</span>
+                <span class="hw-val">16GB RAM / 10GB VRAM</span>
+              </div>
+              <div class="hw-item">
+                <span class="hw-label">70B models</span>
+                <span class="hw-val">64GB RAM / 40GB VRAM</span>
+              </div>
+              <div class="hw-item">
+                <span class="hw-label">CPU-only</span>
+                <span class="hw-val">Works but slow (7B max recommended)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="local-fields">
+            <div class="field-row">
+              <label class="field-label">Server URL</label>
+              <input type="text" id="ollama-url" class="settings-input"
+                placeholder="http://localhost:11434" value="http://localhost:11434" autocomplete="off">
+            </div>
+            <div class="field-row">
+              <label class="field-label">Default Model</label>
+              <input type="text" id="ollama-model" class="settings-input"
+                placeholder="llama3.2" autocomplete="off">
+              <small style="color:var(--text-dim);margin-top:3px;display:block;">
+                Run <code>ollama pull llama3.2</code> to download. Available: llama3.2, mistral, qwen2.5, phi3
+              </small>
+            </div>
+            <div class="field-row" style="flex-direction:row;align-items:center;gap:10px;">
+              <button class="validate-btn" onclick="validateOllama()" style="width:auto;">Test Connection</button>
+              <span id="ollama-val-result" class="val-count hidden"></span>
+            </div>
+          </div>
+
+          <div class="local-install-note">
+            <strong>Install Ollama:</strong>
+            <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download ↗</a>
+            · Then run: <code>ollama serve</code> · Pull a model: <code>ollama pull llama3.2</code>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── TAB: Engine ─────────────────────────────────────────────── -->
+      <div id="stab-engine" class="stab-content hidden">
+
+        <div class="engine-section">
+
+          <!-- Free Models Only -->
+          <div class="engine-row">
+            <div class="engine-info">
+              <div class="engine-title">🆓 Free Models Only</div>
+              <div class="engine-desc">
+                When enabled, only free-tier models appear in the dropdown and routing.
+                Turn off if you have a paid subscription and want access to premium models.
+              </div>
+            </div>
+            <label class="persona-toggle-wrap" title="Restrict to free models only">
+              <input type="checkbox" id="free-models-toggle" checked onchange="saveFreeModelsToggle(this)">
+              <span class="persona-slider"></span>
+            </label>
+          </div>
+
+          <!-- Merge Engine -->
+          <div class="engine-row">
+            <div class="engine-info">
+              <div class="engine-title">Merge Engine</div>
+              <div class="engine-desc">
+                When enabled: all model responses are combined into one answer by a merge operator.
+                When disabled: an AI judge picks the single best response.
+              </div>
+            </div>
+            <label class="persona-toggle-wrap" title="Toggle merge engine">
+              <input type="checkbox" id="merge-engine-toggle" checked onchange="toggleMergeEngine(this)">
+              <span class="persona-slider"></span>
+            </label>
+          </div>
+
+          <!-- Judge config — shown when merge engine is OFF -->
+          <div id="judge-config" class="judge-config hidden">
+            <div class="judge-title">🏆 AI Judge Configuration</div>
+            <p class="judge-desc">
+              The judge reads all model responses and picks the best one verbatim.
+              Choose which model acts as judge — it should be fast and reliable.
+            </p>
+            <div class="field-row">
+              <label class="field-label">Judge Provider</label>
+              <select id="judge-provider-select" class="settings-input" onchange="updateJudgeProvider(this.value)"
+                style="background:var(--surface2);">
+                <option value="groq">Groq (recommended — fastest)</option>
+                <option value="cerebras">Cerebras</option>
+                <option value="gemini">Gemini</option>
+                <option value="ollama">Ollama (local)</option>
+              </select>
+            </div>
+            <div class="field-row" id="judge-model-row" style="display:none;">
+              <label class="field-label">Judge Model</label>
+              <select id="judge-model-select" class="settings-input" style="background:var(--surface2);">
+                <option value="">— loading models —</option>
+              </select>
+            </div>
+            <button class="btn-primary" onclick="saveEngineSettings()" style="margin-top:14px;font-size:12px;padding:8px 18px;">
+              💾 Save Engine Settings
+            </button>
+            <div id="engine-msg" class="settings-msg hidden" style="margin-top:8px;"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── TAB: Reset ──────────────────────────────────────────────── -->
+      <div id="stab-reset" class="stab-content hidden">
+        <div class="reset-section" style="border-top:none;margin-top:0;padding-top:0;">
+          <div class="reset-title">⚠ Reset Options</div>
+          <div class="reset-grid">
+
+            <div class="reset-row">
+              <div class="reset-info">
+                <span class="reset-label">Onboarding</span>
+                <span class="reset-desc">Redo the 7-step setup wizard</span>
+              </div>
+              <button class="reset-btn" onclick="resetOnboarding()">Reset</button>
+            </div>
+
+            <div class="reset-row">
+              <div class="reset-info">
+                <span class="reset-label">Session Memory</span>
+                <span class="reset-desc">Clear in-memory chat context</span>
+              </div>
+              <button class="reset-btn" onclick="resetSessionMemory()">Reset</button>
+            </div>
+
+            <div class="reset-row">
+              <div class="reset-info">
+                <span class="reset-label">Conversations</span>
+                <span class="reset-desc">Delete all saved chat history</span>
+              </div>
+              <button class="reset-btn reset-btn-danger" onclick="resetConversations()">Delete All</button>
+            </div>
+
+            <div class="reset-row">
+              <div class="reset-info">
+                <span class="reset-label">Learned Profile</span>
+                <span class="reset-desc">Wipe AI-learned facts about you</span>
+              </div>
+              <button class="reset-btn reset-btn-danger" onclick="resetLearnedProfile()">Delete</button>
+            </div>
+
+            <div class="reset-row">
+              <div class="reset-info">
+                <span class="reset-label">API Keys</span>
+                <span class="reset-desc">Remove all keys from .env</span>
+              </div>
+              <button class="reset-btn reset-btn-danger" onclick="resetAPIKeys()">Wipe Keys</button>
+            </div>
+
+            <div class="reset-row">
+              <div class="reset-info">
+                <span class="reset-label">Factory Reset</span>
+                <span class="reset-desc">Wipe everything — fresh start</span>
+              </div>
+              <button class="reset-btn reset-btn-nuclear" onclick="factoryReset()">☢ Full Reset</button>
+            </div>
+
+          </div>
+          <div id="reset-msg" class="settings-msg hidden" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+    </div><!-- end modal-body -->
   </div>
 </div>
 

@@ -110,6 +110,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupStarters();
   // Phase 5: Check RAG status
   await checkRAGStatus();
+  // Fetch model counts for header dot tooltips (slightly delayed to not block startup)
+  setTimeout(fetchModelCounts, 2000);
 });
 
 // ── Starter chips ─────────────────────────────────────────────────────────────
@@ -173,7 +175,23 @@ async function fetchUsage() {
   }
 }
 
+// Cache of provider → model count, populated by fetchModelCounts()
+let _modelCounts = {};
+
+async function fetchModelCounts() {
+  try {
+    const counts = await secureFetch('/api/models/counts');
+    _modelCounts = counts;
+    // Re-render dots if settings data is cached
+    if (_lastSettingsData) updateModelStatusBar(_lastSettingsData);
+  } catch(e) {}
+}
+
+// Cache last settings data so we can re-render dots after counts arrive
+let _lastSettingsData = null;
+
 function updateModelStatusBar(data) {
+  _lastSettingsData = data;  // cache for re-render
   const bar = document.getElementById('model-status-bar');
   if (!bar) return;
   bar.innerHTML = '';
@@ -195,12 +213,15 @@ function updateModelStatusBar(data) {
 
     // ── Dot color ──
     let dotColor, statusClass, statusText;
+    const modelCount = _modelCounts[key];
+    const countLabel = modelCount > 0 ? `${modelCount} Models` : 'Ready';
+
     if (!configured) {
       dotColor = '#1e2d3d'; statusClass = 'nokey'; statusText = 'No Key';
     } else if (isExhausted) {
       dotColor = '#ff7b00'; statusClass = 'exhausted'; statusText = 'Exhausted';
     } else {
-      dotColor = MODEL_COLORS[key] || '#4a6478'; statusClass = 'ready'; statusText = 'Ready';
+      dotColor = MODEL_COLORS[key] || '#4a6478'; statusClass = 'ready'; statusText = countLabel;
     }
 
     // ── Wrapper ──
@@ -308,12 +329,15 @@ function updateModelStatusBar(data) {
         }
 
       } else {
-        // No usage data yet — show hint
+        // No usage data yet — show model count if available
         const hint = document.createElement('div');
         hint.className = 'tooltip-hint';
+        const countText = _modelCounts[key] > 0
+          ? ` · ${_modelCounts[key]} models available`
+          : '';
         hint.textContent = isExhausted
-          ? 'Quota exhausted — auto-skipped until restart'
-          : `Free tier · ${unit} · Send a message to track usage`;
+          ? `Quota exhausted — auto-skipped until restart${countText}`
+          : `Free tier · ${unit}${countText}`;
         tip.appendChild(hint);
       }
 
@@ -343,11 +367,19 @@ function updateModelStatusBar(data) {
 
 async function saveSettings() {
   const payload = {
-    gemini_key:     document.getElementById('gemini-key')?.value.trim()     || '',
-    nvidia_key:     document.getElementById('nvidia-key')?.value.trim()     || '',
-    openrouter_key: document.getElementById('openrouter-key')?.value.trim() || '',
-    groq_key:       document.getElementById('groq-key')?.value.trim()       || '',
-    cerebras_key:   document.getElementById('cerebras-key')?.value.trim()   || ''
+    gemini_key:      document.getElementById('gemini-key')?.value.trim()     || '',
+    nvidia_key:      document.getElementById('nvidia-key')?.value.trim()     || '',
+    openrouter_key:  document.getElementById('openrouter-key')?.value.trim() || '',
+    groq_key:        document.getElementById('groq-key')?.value.trim()       || '',
+    cerebras_key:    document.getElementById('cerebras-key')?.value.trim()   || '',
+    ollama_model:    document.getElementById('ollama-model')?.value.trim()   || '',
+    ollama_base_url: document.getElementById('ollama-url')?.value.trim()     || 'http://localhost:11434',
+    // Also send without _key suffix (backend accepts both)
+    gemini:     document.getElementById('gemini-key')?.value.trim()     || '',
+    groq:       document.getElementById('groq-key')?.value.trim()       || '',
+    cerebras:   document.getElementById('cerebras-key')?.value.trim()   || '',
+    nvidia:     document.getElementById('nvidia-key')?.value.trim()     || '',
+    openrouter: document.getElementById('openrouter-key')?.value.trim() || '',
   };
 
   const msgEl = document.getElementById('settings-msg');
@@ -373,7 +405,11 @@ async function saveSettings() {
   }
 }
 
-function showSettings() { document.getElementById('settings-modal').classList.remove('hidden'); }
+function showSettings() {
+  document.getElementById('settings-modal').classList.remove('hidden');
+  loadEngineSettings();
+  loadLocalSettings();
+}
 function hideSettings()  { document.getElementById('settings-modal').classList.add('hidden'); }
 
 document.addEventListener('click', e => {
@@ -1585,4 +1621,228 @@ async function factoryReset() {
     showToast('Factory reset complete — reloading...');
     setTimeout(() => location.reload(), 2000);
   } catch(e) { showResetMsg('✗ ' + e.message, true); }
+}
+
+// ── Feature 1: Settings Tab Switching ─────────────────────────────────────────
+function switchSettingsTab(tab, btn) {
+  document.querySelectorAll('.stab-content').forEach(el => {
+    el.classList.remove('active');
+    el.classList.add('hidden');
+  });
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  const el = document.getElementById('stab-' + tab);
+  if (el) { el.classList.add('active'); el.classList.remove('hidden'); }
+  if (btn) btn.classList.add('active');
+  // Load models for judge dropdown when engine tab opened
+  if (tab === 'engine') loadJudgeModels();
+}
+
+// ── Feature 1: API Key Validation ─────────────────────────────────────────────
+async function validateKey(provider) {
+  const input  = document.getElementById(provider + '-key');
+  const badge  = document.getElementById(provider + '-val-count');
+  const btn    = document.querySelector(`button[onclick="validateKey('${provider}')"]`);
+  if (!input || !badge) return;
+
+  const key = input.value.trim();
+  if (!key) { showToast('Enter an API key first'); return; }
+
+  btn?.classList.add('loading');
+  btn && (btn.textContent = '...');
+  badge.className = 'val-count hidden';
+
+  try {
+    const data = await secureFetch('/api/keys/validate', {
+      method: 'POST',
+      body: JSON.stringify({ provider, key })
+    });
+
+    badge.classList.remove('hidden');
+    if (data.valid) {
+      const models = data.models || [];
+      badge.className = 'val-count';
+      badge.textContent = `${data.count} models`;
+      // Tooltip: show model list on hover
+      badge.title = models.slice(0,30).join('\n') + (models.length > 30 ? `\n...+${models.length-30} more` : '');
+    } else {
+      badge.className = 'val-count error';
+      badge.textContent = data.error || 'Invalid';
+      badge.title = data.error || '';
+    }
+  } catch(e) {
+    badge.classList.remove('hidden');
+    badge.className = 'val-count error';
+    badge.textContent = 'Error';
+    badge.title = e.message;
+  } finally {
+    btn?.classList.remove('loading');
+    btn && (btn.textContent = 'Validate');
+  }
+}
+
+function clearValidation(provider) {
+  const badge = document.getElementById(provider + '-val-count');
+  if (badge) badge.className = 'val-count hidden';
+}
+
+// ── Feature 5: Ollama validation ──────────────────────────────────────────────
+async function validateOllama() {
+  const urlEl    = document.getElementById('ollama-url');
+  const result   = document.getElementById('ollama-val-result');
+  if (!result) return;
+
+  result.className = 'val-count';
+  result.textContent = '...';
+  result.classList.remove('hidden');
+
+  try {
+    const data = await secureFetch('/api/keys/validate', {
+      method: 'POST',
+      body: JSON.stringify({
+        provider: 'ollama',
+        key: 'local',
+        base_url: urlEl?.value || 'http://localhost:11434'
+      })
+    });
+
+    if (data.valid) {
+      result.className = 'val-count';
+      result.textContent = `✓ Connected · ${data.count} model${data.count !== 1 ? 's' : ''}`;
+      result.title = (data.models || []).join('\n');
+    } else {
+      result.className = 'val-count error';
+      result.textContent = '✗ ' + (data.error || 'Connection failed');
+    }
+  } catch(e) {
+    result.className = 'val-count error';
+    result.textContent = '✗ ' + e.message;
+  }
+}
+
+// ── Feature 4: Merge Engine toggle + Judge ────────────────────────────────────
+function toggleMergeEngine(checkbox) {
+  const judgeConfig = document.getElementById('judge-config');
+  if (judgeConfig) {
+    judgeConfig.classList.toggle('hidden', checkbox.checked);
+  }
+  if (!checkbox.checked) {
+    loadJudgeModels();
+  }
+}
+
+async function loadJudgeModels() {
+  const select = document.getElementById('judge-model-select');
+  if (!select) return;
+
+  // Get current judge provider
+  const provider = document.getElementById('judge-provider-select')?.value || 'groq';
+  updateJudgeProvider(provider);
+}
+
+async function updateJudgeProvider(provider) {
+  const modelRow = document.getElementById('judge-model-row');
+  const select   = document.getElementById('judge-model-select');
+  if (!select) return;
+
+  if (provider === 'ollama') {
+    if (modelRow) modelRow.style.display = 'flex';
+    select.innerHTML = '<option value="">Using default Ollama model from Local tab</option>';
+    return;
+  }
+
+  // Fetch live models for this provider
+  if (modelRow) modelRow.style.display = 'flex';
+  select.innerHTML = '<option>Loading...</option>';
+
+  try {
+    const data = await secureFetch('/api/models/available');
+    const models = (data.models || []).filter(m => m.provider === provider);
+    select.innerHTML = models.length
+      ? models.map(m => `<option value="${m.id}">${m.id}</option>`).join('')
+      : '<option value="">— no models found, check API key —</option>';
+  } catch(e) {
+    select.innerHTML = '<option value="">Error loading models</option>';
+  }
+}
+
+async function saveEngineSettings() {
+  const enabled  = document.getElementById('merge-engine-toggle')?.checked ?? true;
+  const provider = document.getElementById('judge-provider-select')?.value || 'groq';
+  const model    = document.getElementById('judge-model-select')?.value || '';
+  const msgEl    = document.getElementById('engine-msg');
+
+  try {
+    await secureFetch('/api/neuconx-settings', {
+      method: 'POST',
+      body: JSON.stringify({
+        merge_engine_enabled: enabled,
+        judge_provider:       provider,
+        judge_model:          model
+      })
+    });
+    if (msgEl) {
+      msgEl.textContent = '✓ Engine settings saved';
+      msgEl.className = 'settings-msg success';
+      msgEl.classList.remove('hidden');
+      setTimeout(() => msgEl.classList.add('hidden'), 3000);
+    }
+    showToast(enabled ? 'Merge engine enabled' : `AI Judge: ${provider}`);
+  } catch(e) {
+    if (msgEl) {
+      msgEl.textContent = '✗ ' + e.message;
+      msgEl.className = 'settings-msg error';
+      msgEl.classList.remove('hidden');
+    }
+  }
+}
+
+// Load engine settings when settings modal opens
+async function loadEngineSettings() {
+  try {
+    const data = await secureFetch('/api/neuconx-settings');
+    const toggle = document.getElementById('merge-engine-toggle');
+    const freeToggle = document.getElementById('free-models-toggle');
+    const judgeConfig = document.getElementById('judge-config');
+    const providerSel = document.getElementById('judge-provider-select');
+
+    if (toggle) toggle.checked = data.merge_engine_enabled !== false;
+    if (freeToggle) freeToggle.checked = data.free_models_only !== false;
+    if (judgeConfig) judgeConfig.classList.toggle('hidden', data.merge_engine_enabled !== false);
+    if (providerSel && data.judge_provider) providerSel.value = data.judge_provider;
+  } catch(e) {}
+}
+
+// Load Ollama settings
+async function loadLocalSettings() {
+  const settings = await secureFetch('/api/settings').catch(() => ({}));
+  const urlEl   = document.getElementById('ollama-url');
+  const modelEl = document.getElementById('ollama-model');
+  if (urlEl && settings.ollama_base_url) urlEl.value = settings.ollama_base_url;
+  if (modelEl && settings.ollama_model)  modelEl.value = settings.ollama_model;
+}
+
+
+
+
+// ── Free Models Only toggle ───────────────────────────────────────────────────
+async function saveFreeModelsToggle(checkbox) {
+  const enabled = checkbox.checked;
+  try {
+    await secureFetch('/api/neuconx-settings', {
+      method: 'POST',
+      body: JSON.stringify({ free_models_only: enabled })
+    });
+    showToast(enabled
+      ? '🆓 Free Models Only — only free-tier models will be used'
+      : '💳 All Models — paid models now available in dropdown'
+    );
+    // Refresh model dropdown if pin selector is open
+    const pinToggle = document.getElementById('model-pin-toggle');
+    if (pinToggle?.checked) populateModelPinDropdown({});
+    // Refresh model counts in dots
+    await fetchModelCounts();
+  } catch(e) {
+    showToast('Failed to save: ' + e.message);
+    checkbox.checked = !enabled; // revert
+  }
 }
