@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/style.css">
+<!-- Markdown renderer — served locally, no CDN dependency -->
+<script src="/static/js/marked.min.js"></script>
 </head>
 <body>
 
@@ -71,6 +73,19 @@
       <span id="current-conv-title">New Conversation</span>
       <div class="header-right">
         <div id="model-status-bar" class="model-status-bar"></div>
+
+        <!-- Model pin selector — hidden by default, shown when toggle is ON -->
+        <div class="model-pin-wrap" id="model-pin-wrap">
+          <label class="model-pin-toggle-wrap" title="Pin a specific model (disables auto routing)">
+            <input type="checkbox" id="model-pin-toggle" onchange="toggleModelPin(this)">
+            <span class="model-pin-slider"></span>
+          </label>
+          <span class="model-pin-label" id="model-pin-label">Auto</span>
+          <select id="model-pin-select" class="model-pin-select hidden" onchange="selectPinnedModel(this.value)">
+            <option value="">— choose model —</option>
+          </select>
+        </div>
+
         <div class="tier-selector">
           <button class="tier-btn active" data-tier="auto"  onclick="setTier('auto')">Auto</button>
           <button class="tier-btn" data-tier="tier1" onclick="setTier('tier1')">Quick</button>
@@ -99,6 +114,17 @@
 
     <div class="input-area">
       <div id="active-skills-display" class="active-skills"></div>
+
+      <!-- Personalization toggle only -->
+      <div class="persona-toggle-row">
+        <label class="persona-toggle-wrap" title="Toggle personalised vs generic responses">
+          <input type="checkbox" id="persona-toggle" checked onchange="togglePersonalization(this)">
+          <span class="persona-slider"></span>
+        </label>
+        <span id="persona-label" class="persona-label persona-on">✦ Personalized</span>
+        <span id="persona-hint" class="persona-hint">Profile + memory</span>
+      </div>
+
       <div class="input-row">
         <textarea
           id="chat-input"

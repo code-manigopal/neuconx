@@ -51,7 +51,9 @@ const state = {
   activeSkills:  new Set(),
   isLoading:     false,
   onboardingStep: 0,
-  onboardingAnswers: {}
+  onboardingAnswers: {},
+  personalized:  true,
+  pinnedModel:   null    // null = auto routing, string = force specific model only
 };
 
 // Model color map
@@ -100,6 +102,8 @@ const setText = (id, text) => { const el = document.getElementById(id); if (el) 
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Configure markdown renderer
+  setupMarked();
   // MUST run first — all secureFetch calls need a valid CSRF token
   await ensureCSRFToken();
   await Promise.all([loadSettings(), loadConversations(), loadSkills(), fetchUsage()]);
@@ -139,6 +143,9 @@ async function loadSettings() {
 
     // Model status dots in header
     updateModelStatusBar(data);
+
+    // Populate model pin dropdown with configured models
+    populateModelPinDropdown(data);
 
     // No-keys warning on welcome screen
     const warn = document.getElementById('no-keys-warning');
@@ -742,7 +749,9 @@ async function sendMessage() {
       message,
       history:        state.messages.slice(-20),
       tier_override:  state.selectedTier === 'auto' ? null : state.selectedTier,
-      skills_active:  Array.from(state.activeSkills)
+      skills_active:  Array.from(state.activeSkills),
+      personalized:   state.personalized,
+      pinned_model:   state.pinnedModel   // null or {provider, modelId}
     };
 
     const data = await secureFetch('/api/chat', { method: 'POST', body: JSON.stringify(payload) });
@@ -750,7 +759,7 @@ async function sendMessage() {
     removeThinking(thinkId);
 
     const answer = data.final_answer || 'No response received.';
-    addMessage('ai', answer, data.tier_used, data.models_used, data.models_called);
+    addMessage('ai', answer, data.tier_used, data.models_used, data.models_called, data.personalized);
     state.messages.push({ role: 'assistant', content: answer, timestamp: new Date().toISOString() });
 
     // Update panels
@@ -775,25 +784,75 @@ async function sendMessage() {
   }
 }
 
-function addMessage(role, content, tier, modelsUsed, modelsCalled) {
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+// Configure marked once — used for AI responses only.
+// User messages always use textContent (never innerHTML) for XSS safety.
+function setupMarked() {
+  if (typeof marked === 'undefined') return;
+  marked.setOptions({
+    breaks:   true,   // single newline → <br>
+    gfm:      true,   // GitHub-flavored markdown
+    pedantic: false,
+    sanitize: false   // we control the source (AI response only, not user input)
+  });
+}
+
+function renderMarkdown(text) {
+  if (typeof marked === 'undefined') return escapeHtml(text);
+  try {
+    return marked.parse(text);
+  } catch(e) {
+    return escapeHtml(text);
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized) {
   const msgs    = document.getElementById('messages');
   const wrapper = document.createElement('div');
   wrapper.className = `message message-${role}`;
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  bubble.textContent = content; // SECURITY: textContent — never innerHTML
+
+  if (role === 'ai') {
+    // SECURITY: AI responses rendered as markdown HTML.
+    // User messages always use textContent — never innerHTML.
+    bubble.classList.add('bubble-markdown');
+    bubble.innerHTML = renderMarkdown(content);
+  } else {
+    bubble.textContent = content; // SECURITY: textContent for all user input
+  }
 
   wrapper.appendChild(bubble);
 
   if (role === 'ai') {
     const meta = document.createElement('div');
     meta.className = 'message-meta';
+
     if (tier) {
       const t = document.createElement('span');
       t.textContent = `${tier}${modelsCalled?.length ? ` · ${modelsCalled.join(', ')}` : ''}`;
       meta.appendChild(t);
     }
+
+    // Personalization badge
+    const pb = document.createElement('span');
+    if (personalized === false) {
+      pb.textContent = '◇ generic';
+      pb.style.cssText = 'color:#4a6478;font-size:9px;';
+    } else {
+      pb.textContent = '✦ personalized';
+      pb.style.cssText = 'color:rgba(0,212,255,0.5);font-size:9px;';
+    }
+    meta.appendChild(pb);
+
+
     wrapper.appendChild(meta);
   }
 
@@ -827,7 +886,11 @@ function removeThinking(id) {
 function renderMessages() {
   const msgs = document.getElementById('messages');
   msgs.innerHTML = '';
-  state.messages.forEach(m => addMessage(m.role, m.content));
+  state.messages.forEach(m => {
+    // Ensure content is always a plain string — never an object or undefined
+    const content = (typeof m.content === 'string') ? m.content : String(m.content || '');
+    addMessage(m.role, content);
+  });
 }
 
 function updateModelResponses(responses) {
@@ -865,8 +928,8 @@ function updateModelResponses(responses) {
       card.appendChild(err);
     } else {
       const text = document.createElement('div');
-      text.className = 'model-response-text';
-      text.textContent = r.response || ''; // textContent — XSS safe
+      text.className = 'model-response-text bubble-markdown';
+      text.innerHTML = renderMarkdown(r.response || '');
       card.appendChild(text);
     }
 
@@ -886,6 +949,194 @@ function setTier(tier) {
     tier3: 'Deep — all models'
   };
   setText('tier-display', labels[tier] || 'Auto routing');
+}
+
+// ── Model Pin Selector ────────────────────────────────────────────────────────
+
+const MODEL_DISPLAY_NAMES = {
+  gemini:     'Gemini 2.0 Flash',
+  groq:       'Groq · Llama 3.3',
+  cerebras:   'Cerebras · Llama 3.3',
+  nvidia:     'NVIDIA NIM',
+  deepseek:   'DeepSeek (OpenRouter)',
+  mistral:    'Mistral (OpenRouter)',
+};
+
+async function populateModelPinDropdown(settingsData) {
+  const select = document.getElementById('model-pin-select');
+  if (!select) return;
+
+  // Reset to loading state
+  while (select.options.length > 1) select.remove(1);
+  const loading = document.createElement('option');
+  loading.disabled = true;
+  loading.textContent = 'Loading models...';
+  select.appendChild(loading);
+
+  try {
+    const data = await secureFetch('/api/models/available');
+    const models = data.models || [];
+
+    // Clear loading option
+    while (select.options.length > 1) select.remove(1);
+
+    if (!models.length) {
+      const empty = document.createElement('option');
+      empty.disabled = true;
+      empty.textContent = 'No models available — check API keys';
+      select.appendChild(empty);
+      return;
+    }
+
+    // Group by provider
+    const PROVIDER_ORDER = ['groq', 'cerebras', 'gemini', 'nvidia', 'openrouter'];
+    const grouped = {};
+    models.forEach(m => {
+      if (!grouped[m.provider]) grouped[m.provider] = [];
+      grouped[m.provider].push(m);
+    });
+
+    const PROVIDER_LABELS = {
+      groq:       '⚡ Groq',
+      cerebras:   '⚡ Cerebras',
+      gemini:     'Gemini',
+      nvidia:     'NVIDIA NIM',
+      openrouter: 'OpenRouter',
+    };
+
+    // Add optgroups per provider
+    PROVIDER_ORDER.forEach(provider => {
+      const pModels = grouped[provider];
+      if (!pModels?.length) return;
+
+      const group = document.createElement('optgroup');
+      group.label = PROVIDER_LABELS[provider] || provider;
+
+      pModels.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ provider: m.provider, modelId: m.id });
+        opt.textContent = m.id;
+        group.appendChild(opt);
+      });
+
+      select.appendChild(group);
+    });
+
+    // Add any remaining providers not in the order list
+    Object.keys(grouped).forEach(provider => {
+      if (!PROVIDER_ORDER.includes(provider)) {
+        const group = document.createElement('optgroup');
+        group.label = provider;
+        grouped[provider].forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = JSON.stringify({ provider: m.provider, modelId: m.id });
+          opt.textContent = m.id;
+          group.appendChild(opt);
+        });
+        select.appendChild(group);
+      }
+    });
+
+  } catch (e) {
+    // Clear loading option, show error
+    while (select.options.length > 1) select.remove(1);
+    const err = document.createElement('option');
+    err.disabled = true;
+    err.textContent = 'Failed to load models';
+    select.appendChild(err);
+    console.error('Model listing failed:', e.message);
+  }
+}
+
+function toggleModelPin(checkbox) {
+  const select    = document.getElementById('model-pin-select');
+  const label     = document.getElementById('model-pin-label');
+  const tierSel   = document.querySelector('.tier-selector');
+
+  if (checkbox.checked) {
+    // Show dropdown, dim tier buttons
+    select.classList.remove('hidden');
+    select.value = '';
+    state.pinnedModel = null;
+    label.textContent = 'Pin:';
+    label.className   = 'model-pin-label pinned';
+    tierSel?.classList.add('pinned');
+    setText('tier-display', 'Pinned model mode');
+  } else {
+    // Hide dropdown, restore auto routing
+    select.classList.add('hidden');
+    state.pinnedModel = null;
+    label.textContent = 'Auto';
+    label.className   = 'model-pin-label';
+    tierSel?.classList.remove('pinned');
+    updateTierDisplay();
+  }
+}
+
+function selectPinnedModel(rawValue) {
+  const label = document.getElementById('model-pin-label');
+  if (!rawValue) {
+    state.pinnedModel = null;
+    label.textContent = 'Pin:';
+    setText('tier-display', 'Pinned model mode — select a model');
+    return;
+  }
+  try {
+    const { provider, modelId } = JSON.parse(rawValue);
+    state.pinnedModel = { provider, modelId };
+    label.textContent = modelId.split('/').pop().split('-').slice(0,3).join('-'); // short label
+    setText('tier-display', `Pinned: ${modelId}`);
+    setText('models-display', `1 model · ${provider}`);
+    showToast(`Pinned to ${modelId}`);
+  } catch(e) {
+    state.pinnedModel = null;
+  }
+}
+
+function updateTierDisplay() {
+  if (state.pinnedModel) {
+    setText('tier-display', `Pinned: ${state.pinnedModel.modelId || state.pinnedModel}`);
+  } else {
+    const labels = {
+      auto: 'Auto routing', tier1: 'Quick — 1 model',
+      tier2: 'Balanced — 2 models', tier3: 'Deep — all models'
+    };
+    setText('tier-display', labels[state.selectedTier] || 'Auto routing');
+  }
+}
+
+// ── Personalization toggle ────────────────────────────────────────────────────
+function togglePersonalization(checkbox) {
+  state.personalized = checkbox.checked;
+
+  const label = document.getElementById('persona-label');
+  const hint  = document.getElementById('persona-hint');
+
+  if (state.personalized) {
+    label.textContent = '✦ Personalized';
+    label.className   = 'persona-label persona-on';
+    hint.textContent  = 'Profile + memory';
+    hint.className    = 'persona-hint';
+  } else {
+    label.textContent = '◇ Generalized';
+    label.className   = 'persona-label persona-off';
+    hint.textContent  = 'No profile context';
+    hint.className    = 'persona-hint off';
+  }
+  updateInputPlaceholder();
+}
+
+function updateInputPlaceholder() {
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  const pinLabel = state.pinnedModel
+    ? state.pinnedModel.modelId?.split('/').pop() || state.pinnedModel.modelId
+    : null;
+  input.placeholder = pinLabel
+    ? `Message NeuConX... (${pinLabel})`
+    : state.personalized
+      ? 'Message NeuConX...'
+      : 'Message NeuConX... (generic mode)';
 }
 
 // ── Save conversation ─────────────────────────────────────────────────────────

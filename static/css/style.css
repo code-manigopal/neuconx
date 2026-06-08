@@ -406,6 +406,12 @@ html, body {
   max-width: 86%; font-size: 13px; line-height: 1.8;
   white-space: pre-wrap; word-break: break-word;
 }
+/* Markdown bubbles: override pre-wrap so HTML renders correctly */
+.message-ai .bubble.bubble-markdown {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.7;
+}
 
 .message-meta {
   font-size: 10px; color: var(--text-dim);
@@ -500,9 +506,16 @@ html, body {
 .model-response-time { font-size: 9px; color: var(--text-dim); }
 .model-response-text {
   font-size: 11px; color: var(--text-mid); line-height: 1.6;
-  white-space: pre-wrap; word-break: break-word;
+  white-space: normal; word-break: break-word;
   max-height: 220px; overflow-y: auto;
 }
+/* Smaller markdown styles inside the right panel */
+.model-response-text.bubble-markdown p { margin: 0 0 6px; font-size: 11px; }
+.model-response-text.bubble-markdown h1,
+.model-response-text.bubble-markdown h2,
+.model-response-text.bubble-markdown h3 { font-size: 12px; margin: 8px 0 4px; }
+.model-response-text.bubble-markdown pre { font-size: 10px; padding: 8px 10px; }
+.model-response-text.bubble-markdown code { font-size: 10px; }
 .model-response-text::-webkit-scrollbar { width: 2px; }
 .model-response-text::-webkit-scrollbar-thumb { background: var(--border); }
 .model-error { font-size: 10px; color: var(--red); margin-top: 4px; font-style: italic; }
@@ -727,3 +740,291 @@ html, body {
 
 /* Push chat input area up so footer doesn't overlap */
 .input-area { padding-bottom: 36px; }
+
+/* ── Personalization Toggle ──────────────────────────────────────────────── */
+.persona-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px 8px;
+}
+
+/* The pill switch */
+.persona-toggle-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.persona-toggle-wrap input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.persona-slider {
+  width: 36px;
+  height: 18px;
+  background: var(--border);
+  border-radius: 9px;
+  position: relative;
+  transition: background 0.25s;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.persona-slider::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  top: 2px;
+  left: 2px;
+  transition: left 0.25s, background 0.25s;
+}
+.persona-toggle-wrap input:checked + .persona-slider {
+  background: rgba(0,212,255,0.3);
+  border-color: rgba(0,212,255,0.4);
+}
+.persona-toggle-wrap input:checked + .persona-slider::after {
+  left: 20px;
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(0,212,255,0.5);
+}
+
+/* Labels */
+.persona-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  transition: color 0.2s;
+}
+.persona-label.persona-on  { color: var(--cyan); }
+.persona-label.persona-off { color: var(--text-dim); }
+
+.persona-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: 2px;
+  transition: color 0.2s;
+}
+.persona-hint.off { color: #2a4060; }
+
+/* ── Auto-Humanize Toggle ────────────────────────────────────────────────── */
+.toggle-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 8px;
+  flex-shrink: 0;
+}
+
+.humanize-slider {
+  /* Default off — orange accent when on */
+}
+.persona-toggle-wrap input:checked + .humanize-slider {
+  background: rgba(255,123,0,0.3) !important;
+  border-color: rgba(255,123,0,0.4) !important;
+}
+.persona-toggle-wrap input:checked + .humanize-slider::after {
+  left: 20px;
+  background: #ff7b00 !important;
+  box-shadow: 0 0 6px rgba(255,123,0,0.5) !important;
+}
+
+.humanize-off { color: var(--text-dim); }
+.humanize-on  { color: #ff7b00; }
+
+/* ── Model Pin Selector ──────────────────────────────────────────────────── */
+.model-pin-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-right: 10px;
+  border-right: 1px solid var(--border);
+  margin-right: 6px;
+}
+
+/* Small toggle pill */
+.model-pin-toggle-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.model-pin-toggle-wrap input {
+  opacity: 0; width: 0; height: 0; position: absolute;
+}
+.model-pin-slider {
+  width: 28px; height: 14px;
+  background: var(--border);
+  border-radius: 7px;
+  position: relative;
+  transition: background 0.2s;
+  border: 1px solid rgba(255,255,255,0.05);
+  flex-shrink: 0;
+}
+.model-pin-slider::after {
+  content: '';
+  position: absolute;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  top: 1.5px; left: 2px;
+  transition: left 0.2s, background 0.2s;
+}
+.model-pin-toggle-wrap input:checked + .model-pin-slider {
+  background: rgba(255,123,0,0.35);
+  border-color: rgba(255,123,0,0.4);
+}
+.model-pin-toggle-wrap input:checked + .model-pin-slider::after {
+  left: 15px;
+  background: #ff7b00;
+  box-shadow: 0 0 5px rgba(255,123,0,0.5);
+}
+
+.model-pin-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 600;
+  min-width: 28px;
+  transition: color 0.2s;
+}
+.model-pin-label.pinned {
+  color: #ff7b00;
+}
+
+/* Model dropdown */
+.model-pin-select {
+  background: var(--surface2);
+  border: 1px solid rgba(255,123,0,0.3);
+  border-radius: 6px;
+  color: #ff7b00;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 3px 6px;
+  outline: none;
+  cursor: pointer;
+  max-width: 130px;
+  transition: border-color 0.2s;
+}
+.model-pin-select:focus {
+  border-color: rgba(255,123,0,0.6);
+}
+.model-pin-select option {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+/* Tier buttons dimmed when a model is pinned */
+.tier-selector.pinned .tier-btn {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ── Markdown bubble styles ──────────────────────────────────────────────── */
+/* .bubble-markdown white-space handled by .message-ai .bubble.bubble-markdown above */
+.bubble-markdown p {
+  margin: 0 0 10px;
+  line-height: 1.7;
+}
+.bubble-markdown p:last-child { margin-bottom: 0; }
+
+.bubble-markdown strong { color: #e8f0f8; font-weight: 700; }
+.bubble-markdown em     { color: #a8c4d8; font-style: italic; }
+
+.bubble-markdown h1, .bubble-markdown h2, .bubble-markdown h3,
+.bubble-markdown h4, .bubble-markdown h5 {
+  font-family: var(--font-head);
+  color: #e8f0f8;
+  margin: 14px 0 6px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+.bubble-markdown h1 { font-size: 17px; }
+.bubble-markdown h2 { font-size: 15px; color: var(--cyan); }
+.bubble-markdown h3 { font-size: 13px; color: var(--cyan); }
+
+.bubble-markdown ul, .bubble-markdown ol {
+  padding-left: 18px;
+  margin: 6px 0 10px;
+}
+.bubble-markdown li {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+.bubble-markdown li::marker { color: var(--cyan); }
+
+.bubble-markdown code {
+  background: rgba(0,212,255,0.08);
+  border: 1px solid rgba(0,212,255,0.15);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #7dd3fc;
+}
+.bubble-markdown pre {
+  background: #0a1520;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.bubble-markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: #c8d6e5;
+  white-space: pre;
+}
+.bubble-markdown pre::-webkit-scrollbar { height: 3px; }
+.bubble-markdown pre::-webkit-scrollbar-thumb { background: var(--border); }
+
+.bubble-markdown blockquote {
+  border-left: 3px solid var(--cyan);
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: var(--text-mid);
+  background: rgba(0,212,255,0.04);
+  border-radius: 0 6px 6px 0;
+}
+
+.bubble-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.bubble-markdown th {
+  background: rgba(0,212,255,0.1);
+  color: var(--cyan);
+  padding: 6px 10px;
+  text-align: left;
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+.bubble-markdown td {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  color: var(--text-mid);
+}
+.bubble-markdown tr:nth-child(even) td {
+  background: rgba(255,255,255,0.02);
+}
+
+.bubble-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.bubble-markdown a {
+  color: var(--cyan);
+  text-decoration: none;
+}
+.bubble-markdown a:hover { text-decoration: underline; }
