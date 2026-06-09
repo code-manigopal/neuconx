@@ -115,16 +115,26 @@
     <div class="input-area">
       <div id="active-skills-display" class="active-skills"></div>
 
-      <!-- Personalization toggle only -->
+      <!-- Compact control row: Personalization + STM toggle -->
       <div class="persona-toggle-row">
         <label class="persona-toggle-wrap" title="Toggle personalised vs generic responses">
           <input type="checkbox" id="persona-toggle" checked onchange="togglePersonalization(this)">
           <span class="persona-slider"></span>
         </label>
         <span id="persona-label" class="persona-label persona-on">✦ Personalized</span>
-        <span id="persona-hint" class="persona-hint">Profile + memory</span>
-      </div>
 
+        <div class="toggle-divider"></div>
+
+        <!-- STM: single toggle expands the pill buttons -->
+        <button class="stm-main-btn" id="stm-toggle-btn" onclick="toggleSTMPanel()" title="Output transformations">
+          STM
+        </button>
+        <div class="stm-pills hidden" id="stm-pills">
+          <button class="stm-btn" id="stm-direct" onclick="toggleSTM('directMode',this)"   title="Strip preambles (Sure, Certainly...)">Direct</button>
+          <button class="stm-btn" id="stm-hedge"  onclick="toggleSTM('hedgeReducer',this)" title="Remove hedging (I think, perhaps...)">No Hedge</button>
+          <button class="stm-btn" id="stm-casual" onclick="toggleSTM('casualMode',this)"   title="Casual tone (However→But, utilize→use)">Casual</button>
+        </div>
+      </div>
       <div class="input-row">
         <textarea
           id="chat-input"

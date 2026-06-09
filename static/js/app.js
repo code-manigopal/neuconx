@@ -53,7 +53,8 @@ const state = {
   onboardingStep: 0,
   onboardingAnswers: {},
   personalized:  true,
-  pinnedModel:   null    // null = auto routing, string = force specific model only
+  pinnedModel:   null,   // null = auto routing, {provider,modelId} = force specific model
+  abortController: null  // for stop button
 };
 
 // Model color map
@@ -769,10 +770,12 @@ async function sendMessage() {
 
   input.value = '';
   input.style.height = 'auto';
+  autoResize(input);
   state.isLoading = true;
-  document.getElementById('send-btn').disabled = true;
 
-  // Remove welcome state
+  // Switch send button → stop button
+  setSendMode('stop');
+
   document.getElementById('welcome-state')?.remove();
 
   addMessage('user', message);
@@ -780,43 +783,82 @@ async function sendMessage() {
 
   const thinkId = addThinking();
 
+  // AbortController for stop button
+  state.abortController = new AbortController();
+
   try {
+    const tune = autoTuneParams(message);
     const payload = {
       message,
-      history:        state.messages.slice(-20),
-      tier_override:  state.selectedTier === 'auto' ? null : state.selectedTier,
-      skills_active:  Array.from(state.activeSkills),
-      personalized:   state.personalized,
-      pinned_model:   state.pinnedModel   // null or {provider, modelId}
+      history:      state.messages.slice(-20),
+      tier_override: state.selectedTier === 'auto' ? null : state.selectedTier,
+      skills_active: Array.from(state.activeSkills),
+      personalized:  state.personalized,
+      pinned_model:  state.pinnedModel,
+      autotune:      tune   // {temperature, top_p, context}
     };
 
-    const data = await secureFetch('/api/chat', { method: 'POST', body: JSON.stringify(payload) });
+    const data = await secureFetch('/api/chat', {
+      method: 'POST',
+      body:   JSON.stringify(payload),
+      signal: state.abortController.signal
+    });
 
     removeThinking(thinkId);
 
     const answer = data.final_answer || 'No response received.';
-    addMessage('ai', answer, data.tier_used, data.models_used, data.models_called, data.personalized);
+    addMessage('ai', answer, data.tier_used, data.models_used, data.models_called, data.personalized, message);
     state.messages.push({ role: 'assistant', content: answer, timestamp: new Date().toISOString() });
 
-    // Update panels
     updateModelResponses(data.model_responses || []);
     setText('tier-display', `${data.tier_used || 'auto'} · ${data.models_used || 0} model${data.models_used !== 1 ? 's' : ''}`);
     setText('models-display', data.models_called?.join(' · ') || '');
 
     await saveCurrentConversation();
-    // Refresh model dots + usage counters after each response
     await Promise.all([loadSettings(), fetchUsage(), checkRAGStatus()]);
-    // Phase 6: Check for new memory candidates
     setTimeout(checkMemoryCandidates, 1500);
 
   } catch (e) {
     removeThinking(thinkId);
-    addMessage('ai', `⚠️ Error: ${e.message}`);
-    console.error('Chat error:', e.message);
+    if (e.name === 'AbortError') {
+      addMessage('ai', '⏹ Response stopped.');
+    } else {
+      addMessage('ai', `⚠️ Error: ${e.message}`);
+      console.error('Chat error:', e.message);
+    }
   } finally {
     state.isLoading = false;
-    document.getElementById('send-btn').disabled = false;
+    state.abortController = null;
+    setSendMode('send');
     input.focus();
+  }
+}
+
+function stopQuery() {
+  if (state.abortController) {
+    state.abortController.abort();
+  }
+}
+
+function setSendMode(mode) {
+  const btn = document.getElementById('send-btn');
+  if (!btn) return;
+  if (mode === 'stop') {
+    btn.textContent   = '⏹';
+    btn.title         = 'Stop (cancel request)';
+    btn.onclick       = stopQuery;
+    btn.disabled      = false;
+    btn.style.background = 'rgba(255,68,68,0.25)';
+    btn.style.borderColor = 'rgba(255,68,68,0.5)';
+    btn.style.color   = '#ff4444';
+  } else {
+    btn.textContent   = '↑';
+    btn.title         = 'Send (Enter)';
+    btn.onclick       = sendMessage;
+    btn.disabled      = false;
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color   = '';
   }
 }
 
@@ -848,25 +890,155 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized) {
+// ── STM (Semantic Transformation Modules) ────────────────────────────────────
+// Client-side post-processors — zero API cost, run on rendered text
+const STM = {
+  directMode: (text) => {
+    // Strip AI preamble phrases
+    return text
+      .replace(/^(Sure[,!]?\s*)/i, '')
+      .replace(/^(Certainly[,!]?\s*)/i, '')
+      .replace(/^(Absolutely[,!]?\s*)/i, '')
+      .replace(/^(Of course[,!]?\s*)/i, '')
+      .replace(/^(Great question[!.]?\s*)/i, '')
+      .replace(/^(That'?s? a great question[!.]?\s*)/i, '')
+      .replace(/^(I'?d be happy to help( you)?( with that)?[.!]?\s*)/i, '')
+      .replace(/^(Let me help you with that[.!]?\s*)/i, '')
+      .replace(/^(Thanks for (asking|sharing)[.!]?\s*)/i, '')
+      .replace(/^([A-z])/, c => c.toUpperCase());
+  },
+  hedgeReducer: (text) => {
+    // Remove hedging phrases that weaken responses
+    return text
+      .replace(/\bI think\s+/gi, '')
+      .replace(/\bI believe\s+/gi, '')
+      .replace(/\bperhaps\s+/gi, '')
+      .replace(/\bmaybe\s+/gi, '')
+      .replace(/\bIt seems (like|that)\s+/gi, '')
+      .replace(/\bIt appears (that)?\s+/gi, '')
+      .replace(/\bprobably\s+/gi, '')
+      .replace(/\bIn my opinion,?\s*/gi, '')
+      .replace(/^([a-z])/, c => c.toUpperCase());
+  },
+  casualMode: (text) => {
+    // Formality reduction
+    return text
+      .replace(/\bHowever\b/g, 'But')
+      .replace(/\bTherefore\b/g, 'So')
+      .replace(/\bFurthermore\b/g, 'Also')
+      .replace(/\bAdditionally\b/g, 'Plus')
+      .replace(/\bNevertheless\b/g, 'Still')
+      .replace(/\bMoreover\b/g, 'Also')
+      .replace(/\bUtilize\b/g, 'Use')
+      .replace(/\butilize\b/g, 'use')
+      .replace(/\bIn order to\b/gi, 'To')
+      .replace(/\bDue to the fact that\b/gi, 'Because')
+      .replace(/\bAt this point in time\b/gi, 'Now')
+      .replace(/\bPrior to\b/gi, 'Before');
+  }
+};
+
+// Active STM modules state
+const stmState = {
+  directMode:   false,
+  hedgeReducer: false,
+  casualMode:   false,
+};
+
+function applySTM(text) {
+  let result = text;
+  if (stmState.directMode)   result = STM.directMode(result);
+  if (stmState.hedgeReducer) result = STM.hedgeReducer(result);
+  if (stmState.casualMode)   result = STM.casualMode(result);
+  return result;
+}
+
+function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized, originalPrompt) {
+  // Apply STM transforms to AI responses before rendering
+  const displayContent = (role === 'ai') ? applySTM(content) : content;
+
   const msgs    = document.getElementById('messages');
   const wrapper = document.createElement('div');
   wrapper.className = `message message-${role}`;
+  // Store raw content for copy/rerun
+  wrapper.dataset.content = content;
+  wrapper.dataset.prompt  = originalPrompt || '';
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
 
   if (role === 'ai') {
-    // SECURITY: AI responses rendered as markdown HTML.
-    // User messages always use textContent — never innerHTML.
     bubble.classList.add('bubble-markdown');
-    bubble.innerHTML = renderMarkdown(content);
+    bubble.innerHTML = renderMarkdown(displayContent);
   } else {
-    bubble.textContent = content; // SECURITY: textContent for all user input
+    bubble.textContent = displayContent;
   }
 
   wrapper.appendChild(bubble);
 
+  // ── Action bar (both user and AI messages) ────────────────────────────────
+  const actions = document.createElement('div');
+  actions.className = 'msg-actions';
+
+  // Copy button
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'msg-action-btn';
+  copyBtn.title     = 'Copy to clipboard';
+  copyBtn.textContent = '⎘';
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(content).then(() => {
+      copyBtn.textContent = '✓';
+      copyBtn.style.color = '#00e896';
+      setTimeout(() => { copyBtn.textContent = '⎘'; copyBtn.style.color = ''; }, 2000);
+    });
+  };
+  actions.appendChild(copyBtn);
+
+  if (role === 'user') {
+    // Re-run button on user messages — replaces input and re-sends
+    const rerunBtn = document.createElement('button');
+    rerunBtn.className   = 'msg-action-btn';
+    rerunBtn.title       = 'Re-run this prompt';
+    rerunBtn.textContent = '↻';
+    rerunBtn.onclick = () => {
+      const input = document.getElementById('chat-input');
+      if (!input || state.isLoading) return;
+      input.value = content;
+      autoResize(input);
+      input.focus();
+      showToast('Prompt loaded — press Enter or edit before sending');
+    };
+    actions.appendChild(rerunBtn);
+  }
+
+  if (role === 'ai') {
+    // Thumbs up
+    const upBtn = document.createElement('button');
+    upBtn.className   = 'msg-action-btn';
+    upBtn.title       = 'Good response';
+    upBtn.textContent = '👍';
+    upBtn.onclick = () => {
+      upBtn.style.color = '#00e896';
+      downBtn.style.color = '';
+      showToast('Feedback noted ✓');
+    };
+    // Thumbs down
+    const downBtn = document.createElement('button');
+    downBtn.className   = 'msg-action-btn';
+    downBtn.title       = 'Bad response';
+    downBtn.textContent = '👎';
+    downBtn.onclick = () => {
+      downBtn.style.color = '#ff4444';
+      upBtn.style.color = '';
+      showToast('Feedback noted ✓');
+    };
+    actions.appendChild(upBtn);
+    actions.appendChild(downBtn);
+  }
+
+  wrapper.appendChild(actions);
+
+  // ── Meta row (AI only) ────────────────────────────────────────────────────
   if (role === 'ai') {
     const meta = document.createElement('div');
     meta.className = 'message-meta';
@@ -877,7 +1049,6 @@ function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized)
       meta.appendChild(t);
     }
 
-    // Personalization badge
     const pb = document.createElement('span');
     if (personalized === false) {
       pb.textContent = '◇ generic';
@@ -887,7 +1058,6 @@ function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized)
       pb.style.cssText = 'color:rgba(0,212,255,0.5);font-size:9px;';
     }
     meta.appendChild(pb);
-
 
     wrapper.appendChild(meta);
   }
@@ -922,10 +1092,14 @@ function removeThinking(id) {
 function renderMessages() {
   const msgs = document.getElementById('messages');
   msgs.innerHTML = '';
+  
   state.messages.forEach(m => {
-    // Ensure content is always a plain string — never an object or undefined
     const content = (typeof m.content === 'string') ? m.content : String(m.content || '');
-    addMessage(m.role, content);
+    
+    // Normalize the API's 'assistant' role to match your UI's 'ai' role
+    const uiRole = (m.role === 'assistant') ? 'ai' : m.role;
+    
+    addMessage(uiRole, content, m.tier, m.modelsUsed, m.modelsCalled, m.personalized, m.prompt);
   });
 }
 
@@ -1120,10 +1294,20 @@ function selectPinnedModel(rawValue) {
   try {
     const { provider, modelId } = JSON.parse(rawValue);
     state.pinnedModel = { provider, modelId };
-    label.textContent = modelId.split('/').pop().split('-').slice(0,3).join('-'); // short label
+    label.textContent = modelId.split('/').pop().split('-').slice(0,3).join('-');
     setText('tier-display', `Pinned: ${modelId}`);
     setText('models-display', `1 model · ${provider}`);
-    showToast(`Pinned to ${modelId}`);
+
+    // Warn if large model on free tier — these can take 30-120 seconds
+    const m = modelId.toLowerCase();
+    const isLarge = m.includes('550b') || m.includes('405b') || m.includes('141b') ||
+                    m.includes('ultra') || m.includes('super') || m.includes('70b') ||
+                    m.includes('72b') || m.includes('671b');
+    if (isLarge && modelId.endsWith(':free')) {
+      showToast(`⚠ ${modelId} is a large model on free tier — responses may take 30–120 seconds. Be patient!`);
+    } else {
+      showToast(`Pinned to ${modelId}`);
+    }
   } catch(e) {
     state.pinnedModel = null;
   }
@@ -1845,4 +2029,70 @@ async function saveFreeModelsToggle(checkbox) {
     showToast('Failed to save: ' + e.message);
     checkbox.checked = !enabled; // revert
   }
+}
+
+// ── STM Toggle ────────────────────────────────────────────────────────────────
+function toggleSTM(module, btn) {
+  stmState[module] = !stmState[module];
+  btn.classList.toggle('active', stmState[module]);
+  const labels = {
+    directMode:   stmState.directMode   ? 'Direct ✓'  : 'Direct',
+    hedgeReducer: stmState.hedgeReducer ? 'No Hedge ✓' : 'No Hedge',
+    casualMode:   stmState.casualMode   ? 'Casual ✓'  : 'Casual',
+  };
+  btn.textContent = labels[module];
+  showToast(stmState[module]
+    ? `STM: ${module} ON — applies to new responses`
+    : `STM: ${module} OFF`
+  );
+}
+
+// ── AutoTune — context-adaptive temperature ───────────────────────────────────
+// Classifies query context and returns optimal temperature.
+// Applied client-side to inform server via payload (server uses it if supported).
+const AUTOTUNE_CONTEXTS = {
+  code: {
+    patterns: [/\bcode\b/i,/\bfunction\b/i,/\bclass\b/i,/\bscript\b/i,
+               /\bdebug\b/i,/\bimplement\b/i,/\brefactor\b/i,/\bapi\b/i,
+               /\bsql\b/i,/\bbash\b/i,/\bpython\b/i,/\bjavascript\b/i],
+    params: { temperature: 0.2, top_p: 0.85 }
+  },
+  creative: {
+    patterns: [/\bwrite\b/i,/\bstory\b/i,/\bpoem\b/i,/\bcreat\b/i,
+               /\bimagine\b/i,/\bfiction\b/i,/\bnovel\b/i,/\bessay\b/i,
+               /\blyric\b/i,/\bart\b/i],
+    params: { temperature: 0.9, top_p: 0.95 }
+  },
+  analytical: {
+    patterns: [/\banalyze\b/i,/\bcompare\b/i,/\bexplain\b/i,/\bwhy\b/i,
+               /\bhow does\b/i,/\bresearch\b/i,/\bevaluate\b/i,/\bassess\b/i,
+               /\bdifference\b/i,/\bpros and cons\b/i,/\badvantage\b/i],
+    params: { temperature: 0.4, top_p: 0.9 }
+  },
+  conversational: {
+    patterns: [/\bhello\b/i,/\bhi\b/i,/\bthanks\b/i,/\bwhat is\b/i,
+               /\bwho is\b/i,/\bwhen\b/i,/\bwhere\b/i,/\bquick\b/i],
+    params: { temperature: 0.7, top_p: 0.9 }
+  }
+};
+
+function autoTuneParams(message) {
+  const scores = {};
+  for (const [ctx, cfg] of Object.entries(AUTOTUNE_CONTEXTS)) {
+    scores[ctx] = cfg.patterns.filter(p => p.test(message)).length;
+  }
+  const best = Object.entries(scores).sort((a,b) => b[1]-a[1])[0];
+  if (best[1] === 0) return { temperature: 0.7, top_p: 0.9, context: 'conversational' };
+  return { ...AUTOTUNE_CONTEXTS[best[0]].params, context: best[0] };
+}
+
+// ── STM Panel toggle ──────────────────────────────────────────────────────────
+function toggleSTMPanel() {
+  const pills = document.getElementById('stm-pills');
+  const btn   = document.getElementById('stm-toggle-btn');
+  if (!pills) return;
+  const open = pills.classList.toggle('hidden') === false;
+  // classList.toggle returns true if class was added (hidden), false if removed (visible)
+  const visible = !pills.classList.contains('hidden');
+  btn.classList.toggle('active', visible);
 }

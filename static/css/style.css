@@ -1239,3 +1239,106 @@ html, body {
 }
 .judge-title { font-size: 13px; font-weight: 700; color: var(--cyan); margin-bottom: 8px; }
 .judge-desc { font-size: 11px; color: var(--text-dim); line-height: 1.6; margin-bottom: 14px; }
+
+/* ── Message Action Buttons ──────────────────────────────────────────────── */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.message:hover .msg-actions { opacity: 1; }
+
+.msg-action-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: var(--font-mono);
+  line-height: 1.4;
+}
+.msg-action-btn:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--border);
+  color: var(--text-mid);
+}
+
+/* ── Stop button state ──────────────────────────────────────────────────── */
+#send-btn {
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+/* ── STM Panel ──────────────────────────────────────────────────────────── */
+.stm-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px;
+  flex-wrap: wrap;
+}
+.stm-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.stm-btn {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.stm-btn:hover { border-color: var(--cyan); color: var(--text-mid); }
+.stm-btn.active {
+  background: rgba(0,212,255,0.1);
+  border-color: rgba(0,212,255,0.5);
+  color: var(--cyan);
+}
+
+/* ── STM compact inline style ────────────────────────────────────────────── */
+.stm-main-btn {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-transform: uppercase;
+}
+.stm-main-btn:hover  { border-color: var(--cyan); color: var(--cyan); }
+.stm-main-btn.active { background: rgba(0,212,255,0.1); border-color: rgba(0,212,255,0.4); color: var(--cyan); }
+
+.stm-pills {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.stm-pills.hidden { display: none !important; }
+
+/* Override old stm-panel spacing — keep pills inline */
+.stm-btn {
+  padding: 2px 8px;
+  font-size: 9px;
+}
+
+/* Remove hint text — not needed anymore */
+.persona-hint { display: none; }

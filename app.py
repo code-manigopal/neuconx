@@ -83,15 +83,19 @@ for d in [SKILLS_DIR, CONV_DIR, DATA_DIR]:
 def get_keys():
     """
     SECURITY + FIX: Reload .env on every call so new keys apply without restart.
-    This fixes the 'save keys → must restart' UX problem.
+    Strip all keys — whitespace in .env values causes 401 errors on all providers.
     """
     env = dotenv_values(ENV_PATH) if ENV_PATH.exists() else {}
+    def _k(name):
+        return (env.get(name, '') or os.getenv(name, '') or '').strip()
     return {
-        'gemini':      env.get('GEMINI_API_KEY', '')      or os.getenv('GEMINI_API_KEY', ''),
-        'nvidia':      env.get('NVIDIA_API_KEY', '')      or os.getenv('NVIDIA_API_KEY', ''),
-        'openrouter':  env.get('OPENROUTER_API_KEY', '')  or os.getenv('OPENROUTER_API_KEY', ''),
-        'groq':        env.get('GROQ_API_KEY', '')        or os.getenv('GROQ_API_KEY', ''),
-        'cerebras':    env.get('CEREBRAS_API_KEY', '')    or os.getenv('CEREBRAS_API_KEY', ''),
+        'gemini':         _k('GEMINI_API_KEY'),
+        'nvidia':         _k('NVIDIA_API_KEY'),
+        'openrouter':     _k('OPENROUTER_API_KEY'),
+        'groq':           _k('GROQ_API_KEY'),
+        'cerebras':       _k('CEREBRAS_API_KEY'),
+        'ollama_model':   _k('OLLAMA_MODEL'),
+        'ollama_base_url': _k('OLLAMA_BASE_URL') or 'http://localhost:11434',
     }
 
 # ── Security Helpers ───────────────────────────────────────────────────────────
@@ -271,7 +275,7 @@ def call_openrouter(prompt: str, history: list, keys: dict, model_id: str, label
         return {'model': label, 'response': '', 'error': f'Error: {err_type}'}
 
 
-def call_groq(prompt: str, history: list, keys: dict) -> dict:
+def call_groq(prompt: str, history: list, keys: dict, temperature: float = 0.7) -> dict:
     """Groq — Llama 3.3 70B, extremely fast, generous free tier."""
     key = keys.get('groq', '')
     if not key:
@@ -309,7 +313,7 @@ def call_groq(prompt: str, history: list, keys: dict) -> dict:
         return {'model': 'groq', 'response': '', 'error': f'Error: {err_type}'}
 
 
-def call_cerebras(prompt: str, history: list, keys: dict) -> dict:
+def call_cerebras(prompt: str, history: list, keys: dict, temperature: float = 0.7) -> dict:
     """Cerebras — Llama 3.3 70B, very fast inference, free tier."""
     key = keys.get('cerebras', '')
     if not key:
@@ -459,8 +463,20 @@ def mark_exhausted(model: str):
     logger.warning(f"Model '{model}' marked as quota-exhausted — will skip until restart")
 
 def is_exhausted(model: str) -> bool:
+    key = 'openrouter' if model.startswith('openrouter_') else model
     with _exhausted_lock:
-        return model in _exhausted_models
+        return key in _exhausted_models
+
+
+# ── OpenRouter default free models for auto-routing ──────────────────────────
+OPENROUTER_AUTO_MODELS = [
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'nvidia/nemotron-3-nano-30b-a3b:free',
+    'qwen/qwen3-next-80b-a3b-instruct:free',
+    'google/gemma-4-26b-a4b-it:free',
+    'openai/gpt-oss-20b:free',
+    'mistralai/mistral-7b-instruct:free',
+]
 
 
 def build_model_list(tier: str, keys: dict) -> list:
@@ -474,34 +490,32 @@ def build_model_list(tier: str, keys: dict) -> list:
     Quota-exhausted models are skipped automatically for the rest of the session.
     This means after Gemini hits its cap, Groq/Cerebras serve all traffic seamlessly.
     """
-    # Priority order: fastest/most-reliable free first
-    # Groq and Cerebras before Gemini intentionally — saves Gemini quota for merge ops
+    # Priority: Groq first (fastest), then Cerebras, then OpenRouter (3 slots —
+    # most model variety, no daily cap), then Gemini (preserve 1500/day quota),
+    # then NVIDIA (tightest rate limit), then Ollama (local).
     available = []
-    if keys.get('groq')      and not is_exhausted('groq'):      available.append('groq')
-    if keys.get('cerebras')  and not is_exhausted('cerebras'):  available.append('cerebras')
-    if keys.get('gemini')    and not is_exhausted('gemini'):    available.append('gemini')
-    if keys.get('nvidia')    and not is_exhausted('nvidia'):    available.append('nvidia')
-    if keys.get('openrouter') and not is_exhausted('deepseek'): available.append('deepseek')
-    if keys.get('openrouter') and not is_exhausted('mistral'):  available.append('mistral')
+
+    if keys.get('groq')      and not is_exhausted('groq'):       available.append('groq')
+    if keys.get('cerebras')  and not is_exhausted('cerebras'):   available.append('cerebras')
+    if keys.get('openrouter') and not is_exhausted('openrouter'):
+        available.append('openrouter_1')
+        available.append('openrouter_2')
+        available.append('openrouter_3')
+    if keys.get('gemini')    and not is_exhausted('gemini'):     available.append('gemini')
+    if keys.get('nvidia')    and not is_exhausted('nvidia'):     available.append('nvidia')
+    if keys.get('ollama_model') and not is_exhausted('ollama'):  available.append('ollama')
 
     if not available:
-        # All preferred models exhausted — try exhausted ones as last resort
-        # (quota may have reset since we marked them)
         fallback = []
-        if keys.get('groq'):      fallback.append('groq')
-        if keys.get('cerebras'):  fallback.append('cerebras')
-        if keys.get('gemini'):    fallback.append('gemini')
-        if keys.get('nvidia'):    fallback.append('nvidia')
-        if keys.get('openrouter'):
-            fallback.append('deepseek')
-            fallback.append('mistral')
-        return fallback[:1]  # last resort: try any one model
+        if keys.get('groq'):       fallback.append('groq')
+        if keys.get('cerebras'):   fallback.append('cerebras')
+        if keys.get('openrouter'): fallback.append('openrouter_1')
+        if keys.get('gemini'):     fallback.append('gemini')
+        if keys.get('nvidia'):     fallback.append('nvidia')
+        return fallback[:1]
 
-    # Tier limits
     limits = {'tier1': 1, 'tier2': 2, 'tier3': len(available)}
-    limit  = limits.get(tier, 1)
-
-    return available[:limit]
+    return available[:limits.get(tier, 1)]
 
 
 
@@ -870,6 +884,17 @@ def chat():
     # Must be set here so Python's compiler doesn't treat it as unbound in early-exit branches
     enriched = message
 
+    # AutoTune: client sends detected context + optimal temperature
+    # We use it to set temperature per call instead of always 0.7
+    autotune = data.get('autotune', {})
+    autotune_temp = float(autotune.get('temperature', 0.7))
+    autotune_top_p = float(autotune.get('top_p', 0.9))
+    autotune_context = str(autotune.get('context', 'conversational'))
+    # Clamp to safe ranges
+    autotune_temp  = max(0.1, min(1.5, autotune_temp))
+    autotune_top_p = max(0.5, min(1.0, autotune_top_p))
+    logger.info(f"AutoTune: context={autotune_context} temp={autotune_temp} top_p={autotune_top_p}")
+
     # Load keys fresh every request — no restart needed
     keys = get_keys()
 
@@ -974,17 +999,43 @@ def chat():
                             'error': None}
 
                 elif provider == 'openrouter':
+                    or_key = (k.get('openrouter') or '').strip()
+                    if not or_key:
+                        return {'model': model_id, 'provider': provider,
+                                'response': '', 'error': 'No OpenRouter API key configured'}
                     r = http_req.post(
                         'https://openrouter.ai/api/v1/chat/completions',
-                        headers={'Authorization': f'Bearer {k["openrouter"]}',
-                                 'Content-Type': 'application/json',
-                                 'HTTP-Referer': 'http://localhost:5050',
-                                 'X-Title': 'NeuConX'},
-                        json={'model': model_id,
-                              'messages': _safe_history(hist) + [{'role':'user','content': sanitize_input(prompt, 4000)}],
-                              'max_tokens': estimate_max_tokens(prompt)},
-                        timeout=60
+                        headers={
+                            'Authorization': f'Bearer {or_key}',
+                            'Content-Type': 'application/json',
+                            'HTTP-Referer': 'http://localhost:5050',
+                            'X-Title': 'NeuConX'
+                        },
+                        json={
+                            'model': model_id,
+                            'messages': _safe_history(hist) + [{'role': 'user', 'content': sanitize_input(prompt, 4000)}],
+                            'max_tokens': estimate_max_tokens(prompt)
+                        },
+                        timeout=180   # Large models on free tier can be slow
                     )
+                    # OpenRouter returns error details in JSON even on 4xx
+                    if not r.ok:
+                        try:
+                            err_body = r.json()
+                            err_msg = err_body.get('error', {}).get('message', r.reason)
+                        except Exception:
+                            err_msg = r.reason
+                        if r.status_code == 401:
+                            return {'model': model_id, 'provider': provider, 'response': '',
+                                    'error': f'OpenRouter 401: {err_msg} — check your API key in Settings'}
+                        if r.status_code == 402:
+                            return {'model': model_id, 'provider': provider, 'response': '',
+                                    'error': f'OpenRouter 402: No credits — {err_msg}'}
+                        if r.status_code == 429:
+                            return {'model': model_id, 'provider': provider, 'response': '',
+                                    'error': 'OpenRouter rate limited — wait a moment and retry'}
+                        return {'model': model_id, 'provider': provider, 'response': '',
+                                'error': f'OpenRouter {r.status_code}: {err_msg}'}
                     r.raise_for_status()
                     return {'model': model_id, 'provider': provider,
                             'response': r.json()['choices'][0]['message']['content'],
@@ -1159,9 +1210,15 @@ def chat():
             elif model_key == 'mistral':
                 return call_openrouter(enriched, history, keys, 'mistralai/mistral-7b-instruct', 'mistral')
             elif model_key == 'groq':
-                return call_groq(enriched, history, keys)
+                return call_groq(enriched, history, keys, temperature=autotune_temp)
             elif model_key == 'cerebras':
-                return call_cerebras(enriched, history, keys)
+                return call_cerebras(enriched, history, keys, temperature=autotune_temp)
+            elif model_key == 'openrouter_1':
+                return call_openrouter(enriched, history, keys, OPENROUTER_AUTO_MODELS[0], 'openrouter_1')
+            elif model_key == 'openrouter_2':
+                return call_openrouter(enriched, history, keys, OPENROUTER_AUTO_MODELS[1], 'openrouter_2')
+            elif model_key == 'openrouter_3':
+                return call_openrouter(enriched, history, keys, OPENROUTER_AUTO_MODELS[2], 'openrouter_3')
             elif model_key == 'ollama':
                 return call_ollama(enriched, history, keys)
             return {'model': model_key, 'response': '', 'error': 'Unknown model'}
@@ -1176,7 +1233,8 @@ def chat():
 
         # Track usage
         if not (r.get('error') == 'No API key'):
-            usage_tracker.record(model_key)
+            track_key = 'openrouter' if model_key.startswith('openrouter_') else model_key
+            usage_tracker.record(track_key)
         with lock:
             results[model_key] = r
 
