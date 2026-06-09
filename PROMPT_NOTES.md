@@ -430,3 +430,109 @@ If you have an OpenRouter paid account with access to GPT-4o, Claude, etc.:
 2. All 341+ OpenRouter models appear in the pin dropdown
 3. Auto-routing still prioritises Groq/Cerebras first (fastest free)
 4. Use pin selector to force a specific paid model when needed
+
+
+---
+
+## PromptNotes Appendix 2 — Large Models, Timeouts, Install
+*Added: June 2026*
+
+---
+
+## Large Model Behaviour on Free Tier
+
+When using the model pin selector, response time varies enormously by model size:
+
+| Model size | Free tier wait | Example models |
+|------------|---------------|----------------|
+| 3B–8B | 1–5 seconds | phi3, llama3.2, gemma-4-9b |
+| 13B–30B | 3–15 seconds | mistral:13b, nemotron-nano-30b |
+| 70B–72B | 5–30 seconds | llama3.3-70b, qwen2.5-72b |
+| 120B+ | 30–120 seconds | nemotron-super-120b |
+| 405B–550B | 60–180 seconds | llama3.1-405b, nemotron-ultra-550b |
+
+**Why free tier is slow for large models:** OpenRouter serves paying customers first. On free tier, 550B model requests sit in a shared queue. The model itself takes longer to generate tokens even with full GPU priority.
+
+**NeuConX timeout:** 180 seconds for pinned models (increased from 60s). If a model consistently times out, pin a smaller one or switch back to auto routing.
+
+**Warning system:** When you pin a model with 70B+ or `ultra`/`super` in the name on the `:free` tier, a toast notification appears:
+```
+⚠ nvidia/nemotron-3-ultra-550b-a55b:free is a large model on free tier
+— responses may take 30-120 seconds. Be patient!
+```
+
+---
+
+## Install Scripts
+
+### What Each File Does
+
+| File | Platform | Purpose |
+|------|----------|---------|
+| `install.bat` | Windows | One-time guided setup wizard |
+| `install.sh` | Mac/Linux | One-time guided setup wizard |
+| `start.bat` | Windows | Daily launcher |
+| `start.sh` | Mac/Linux | Daily launcher |
+
+### install.bat / install.sh — What They Do
+
+Both wizards are identical in logic, different in syntax:
+
+1. **Find Python** — tries `python` → `python3` → `py` (Windows) or `python3` → `python3.x` (Mac/Linux). Shows OS-specific install instructions if missing.
+2. **Set up pip** — uses `python -m pip` always (not bare `pip` which may not be on PATH). Falls back to `ensurepip` if pip itself is missing.
+3. **Install core packages** — Flask, Flask-Limiter, bleach, python-dotenv, requests, google-generativeai. Verifies each import after install. Shows exactly which package failed if something goes wrong.
+4. **ChromaDB (optional)** — explains what it does in plain English, asks Y/N. Downloads 80MB model on first use.
+5. **Create .env** — generates a random `SECRET_KEY`, creates blank API key slots. Offers to open the file for editing immediately.
+6. **Get API key** — explains what Groq is, offers to open console.groq.com, offers to open .env to paste the key.
+
+### Why `python -m pip` Instead of `pip`
+
+On many Windows systems (especially Microsoft Store Python) and on newer Linux distros, the `pip` command is not on PATH even when Python is installed. `python -m pip` always works because it uses the pip that belongs to the exact Python executable that was found.
+
+### Mac/Linux pip Install Flags
+
+`install.sh` tries three approaches in order:
+1. `--break-system-packages` — needed on Ubuntu 23+, Debian 12+, newer Macs
+2. `--user` — installs to `~/.local/lib`, no system-level permissions needed
+3. Bare install — fallback for older systems
+
+### start.sh Browser Opening
+
+On Mac: uses `open http://localhost:5050`
+On Linux: uses `xdg-open http://localhost:5050`
+Both run in background with a 2-second delay so the server has time to start.
+
+---
+
+## API Key 401 Errors — Diagnosis
+
+If you get `401 Unauthorized` from any provider:
+
+1. **Whitespace in key** — the most common cause. Open `.env` and check there are no spaces before or after the key value. NeuConX now strips all keys on load, but old `.env` files may have this.
+
+2. **Wrong key for wrong provider** — Groq keys start with `gsk_`, Cerebras with `csk-`, NVIDIA with `nvapi-`, OpenRouter with `sk-or-`. If they're swapped you'll get 401.
+
+3. **OpenRouter specifically** — returns 401 for:
+   - Invalid key
+   - Account suspended
+   - Model requires credits you don't have (even on "free" tier, some models need a minimum balance)
+   - The error message from OpenRouter's response body is now shown directly: `OpenRouter 401: No auth credentials found`
+
+4. **Validate before use** — Settings → API Providers → click Validate next to any key. Shows model count on success, specific error message on failure.
+
+---
+
+## how_it_works.html
+
+The visual flowchart at `/how_it_works.html` shows the complete request lifecycle:
+
+1. You type a message
+2. It gets enriched with your profile, active skills, and relevant past conversations (if personalization is ON)
+3. Smart Router classifies complexity locally (Tier 1/2/3)
+4. Selected models receive the enriched message simultaneously
+5. Merge Engine or AI Judge produces the final answer
+6. Everything saved locally (conversations, profile, ChromaDB vectors)
+
+The file must be placed in the `NEUCONX/` root folder (same level as `app.py`). It is served at `http://localhost:5050/how_it_works.html` and also linked in the app footer.
+
+To open it directly: double-click `how_it_works.html` in your file manager — it works as a standalone HTML file too.
