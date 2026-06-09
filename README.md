@@ -75,13 +75,13 @@ Open **http://localhost:5050** in your browser.
 
 | Provider | Model | Free Tier | Get Key |
 |----------|-------|-----------|---------|
+| **OpenRouter** | 24+ free models | `:free` suffix models | [openrouter.ai](https://openrouter.ai) |
 | **Groq** | Llama 3.3 70B | Generous daily limit, fastest | [console.groq.com](https://console.groq.com) |
 | **Cerebras** | Llama 3.3 70B | 60 req/min, fast | [cloud.cerebras.ai](https://cloud.cerebras.ai) |
 | **Google AI Studio** | Gemini 2.0 Flash | 1,500 req/day | [aistudio.google.com](https://aistudio.google.com) |
 | **NVIDIA NIM** | Llama 3.3 70B | 40 req/min | [build.nvidia.com](https://build.nvidia.com) |
-| **OpenRouter** | 24+ free models | `:free` suffix models | [openrouter.ai](https://openrouter.ai) |
 
-**Recommended start:** Add Groq first. It is the fastest, most generous free tier, and takes under 2 minutes to set up.
+**Recommended start:** Add Openrouter, and Groq first. It is the fastest, most generous free tier, and takes under 2 minutes to set up.
 
 ### Local Models (No API key needed)
 
@@ -127,7 +127,7 @@ Disable the merge engine in Settings → Engine. The judge reads all responses a
 ### Model Priority Order
 
 ```
-Groq → Cerebras → Gemini → NVIDIA → OpenRouter → Ollama
+OpenRouter -> Groq → Cerebras → Gemini → NVIDIA → OpenRouter → Ollama
 ```
 
 Groq and Cerebras run first — most generous free tiers. Gemini's 1,500/day cap is preserved for actual queries.
