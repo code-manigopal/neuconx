@@ -19,7 +19,10 @@
   --text-mid:  #7a9ab4;
   --radius:    12px;
   --radius-lg: 20px;
-  --font-mono: 'JetBrains Mono', monospace;
+  
+  /* NEW FONT STACK */
+  --font-sans: 'Avenir Next', 'Avenir', 'Nunito', 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: 'Montesserat', monospace;
   --font-head: 'Syne', sans-serif;
 
   /* Model accent colors */
@@ -32,6 +35,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
 
 html, body {
   height: 100%;

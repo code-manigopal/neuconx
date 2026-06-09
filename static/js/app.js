@@ -1919,7 +1919,7 @@ async function loadJudgeModels() {
   if (!select) return;
 
   // Get current judge provider
-  const provider = document.getElementById('judge-provider-select')?.value || 'groq';
+  const provider = document.getElementById('judge-provider-select')?.value || 'openrouter';
   updateJudgeProvider(provider);
 }
 

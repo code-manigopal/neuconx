@@ -6,8 +6,13 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <title>NeuConX — Personal AI Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caudex:ital,wght@0,400;0,700;1,400;1,700&family=McLaren&family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=McLaren&family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <!-- Markdown renderer — served locally, no CDN dependency -->
 <script src="/static/js/marked.min.js"></script>
 </head>
@@ -426,7 +431,8 @@
               <label class="field-label">Judge Provider</label>
               <select id="judge-provider-select" class="settings-input" onchange="updateJudgeProvider(this.value)"
                 style="background:var(--surface2);">
-                <option value="groq">Groq (recommended — fastest)</option>
+                <option value="openrouter">Openrouter</option>
+                <option value="groq">Groq</option>
                 <option value="cerebras">Cerebras</option>
                 <option value="gemini">Gemini</option>
                 <option value="ollama">Ollama (local)</option>
