@@ -356,7 +356,7 @@
             <div class="field-row">
               <label class="field-label">Server URL</label>
               <input type="text" id="ollama-url" class="settings-input"
-                placeholder="http://localhost:11434" value="http://localhost:11434" autocomplete="off">
+                placeholder="http://localhost:11434" autocomplete="off">
             </div>
             <div class="field-row">
               <label class="field-label">Default Model</label>
@@ -366,10 +366,12 @@
                 Run <code>ollama pull llama3.2</code> to download. Available: llama3.2, mistral, qwen2.5, phi3
               </small>
             </div>
-            <div class="field-row" style="flex-direction:row;align-items:center;gap:10px;">
+            <div class="field-row" style="flex-direction:row;align-items:center;gap:10px;flex-wrap:wrap;">
               <button class="validate-btn" onclick="validateOllama()" style="width:auto;">Test Connection</button>
+              <button class="btn-primary" onclick="saveLocalSettings()" style="font-size:11px;padding:6px 16px;">💾 Save</button>
               <span id="ollama-val-result" class="val-count hidden"></span>
             </div>
+            <div id="local-settings-msg" class="settings-msg hidden" style="margin-top:6px;"></div>
           </div>
 
           <div class="local-install-note">

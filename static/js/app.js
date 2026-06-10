@@ -64,7 +64,8 @@ const MODEL_COLORS = {
   deepseek: '#00C4FF',
   mistral:  '#FF7000',
   groq:     '#F55036',
-  cerebras: '#8B5CF6'
+  cerebras: '#8B5CF6',
+  ollama:   '#00e896'
 };
 
 // ── Onboarding steps ──────────────────────────────────────────────────────────
@@ -204,7 +205,8 @@ function updateModelStatusBar(data) {
     { key: 'groq',       name: 'Groq Llama 3.3 70B', limit: 14400, resetLabel: 'Daily',   unit: 'req/day'  },
     { key: 'cerebras',   name: 'Cerebras Llama 3.3', limit: 60,    resetLabel: 'Minute',  unit: 'req/min'  },
     { key: 'nvidia',     name: 'NVIDIA NIM',         limit: 40,    resetLabel: 'Minute',  unit: 'req/min'  },
-    { key: 'openrouter', name: 'OpenRouter',         limit: null,  resetLabel: 'Credits', unit: 'credits'  }
+    { key: 'openrouter', name: 'OpenRouter',         limit: null,  resetLabel: 'Credits', unit: 'credits'  },
+    { key: 'ollama',     name: 'Local / LAN Model',  limit: null,  resetLabel: 'None',    unit: 'unlimited'}
   ];
 
   MODELS.forEach(({ key, name, limit, resetLabel, unit }) => {
@@ -1203,7 +1205,7 @@ async function populateModelPinDropdown(settingsData) {
     }
 
     // Group by provider
-    const PROVIDER_ORDER = ['groq', 'cerebras', 'gemini', 'nvidia', 'openrouter'];
+    const PROVIDER_ORDER = ['groq', 'cerebras', 'gemini', 'nvidia', 'openrouter', 'ollama'];
     const grouped = {};
     models.forEach(m => {
       if (!grouped[m.provider]) grouped[m.provider] = [];
@@ -1216,6 +1218,7 @@ async function populateModelPinDropdown(settingsData) {
       gemini:     'Gemini',
       nvidia:     'NVIDIA NIM',
       openrouter: 'OpenRouter',
+      ollama:     '🖥 Local / LAN',
     };
 
     // Add optgroups per provider
@@ -2099,4 +2102,36 @@ function toggleSTMPanel() {
   // classList.toggle returns true if class was added (hidden), false if removed (visible)
   const visible = !pills.classList.contains('hidden');
   btn.classList.toggle('active', visible);
+}
+
+// Save Ollama / LAN settings
+async function saveLocalSettings() {
+  const url   = document.getElementById('ollama-url')?.value.trim()   || '';
+  const model = document.getElementById('ollama-model')?.value.trim() || '';
+  const msgEl = document.getElementById('local-settings-msg');
+
+  try {
+    await secureFetch('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({
+        ollama_base_url: url,
+        ollama_model:    model,
+        gemini: '', groq: '', cerebras: '', nvidia: '', openrouter: ''
+      })
+    });
+    if (msgEl) {
+      msgEl.textContent = '✓ Local model settings saved';
+      msgEl.className = 'settings-msg success';
+      msgEl.classList.remove('hidden');
+      setTimeout(() => msgEl.classList.add('hidden'), 3000);
+    }
+    showToast('Local model saved');
+    await loadSettings();
+  } catch(e) {
+    if (msgEl) {
+      msgEl.textContent = '✗ ' + e.message;
+      msgEl.className = 'settings-msg error';
+      msgEl.classList.remove('hidden');
+    }
+  }
 }

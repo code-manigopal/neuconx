@@ -922,11 +922,12 @@ def chat():
         pinned_model_id = sanitize_input(str(pinned_raw.get('modelId', '')), 200)
 
     PROVIDER_KEY_MAP = {
-        'groq':       keys.get('groq'),
-        'cerebras':   keys.get('cerebras'),
-        'gemini':     keys.get('gemini'),
-        'nvidia':     keys.get('nvidia'),
-        'openrouter': keys.get('openrouter'),
+    'groq':       keys.get('groq'),
+    'cerebras':   keys.get('cerebras'),
+    'gemini':     keys.get('gemini'),
+    'nvidia':     keys.get('nvidia'),
+    'openrouter': keys.get('openrouter'),
+    'ollama':     keys.get('ollama_model') or 'local',  # ← ADD THIS
     }
 
     if pinned_provider and pinned_model_id:
@@ -1048,6 +1049,24 @@ def chat():
                     resp = gmodel.generate_content(sanitize_input(prompt, 4000))
                     return {'model': model_id, 'provider': provider,
                             'response': resp.text, 'error': None}
+
+                elif provider == 'ollama':
+                    base_url = k.get('ollama_base_url', 'http://localhost:11434').rstrip('/')
+                    if base_url.endswith('/v1'):
+                        base_url = base_url[:-3]
+                    r = http_req.post(
+                        f'{base_url}/v1/chat/completions',
+                        headers={'Content-Type': 'application/json'},
+                        json={
+                            'model': model_id,
+                            'messages': _safe_history(hist) + [{'role': 'user', 'content': sanitize_input(prompt, 4000)}]
+                        },
+                        timeout=120
+                    )
+                    r.raise_for_status()
+                    return {'model': model_id, 'provider': provider,
+                            'response': r.json()['choices'][0]['message']['content'],
+                            'error': None}
 
                 return {'model': model_id, 'provider': provider,
                         'response': '', 'error': f'Unknown provider: {provider}'}
@@ -1522,11 +1541,17 @@ def get_settings():
         hints[name]      = f"...{val[-4:]}" if val else None
     with _exhausted_lock:
         exhausted_list = list(_exhausted_models)
+    ollama_model = keys.get('ollama_model', '')
+    ollama_base  = keys.get('ollama_base_url', '')
     return jsonify({
         **{f'{k}_configured': v for k, v in configured.items()},
         **{f'{k}_hint':       v for k, v in hints.items()},
-        'any_configured': any(configured.values()),
-        'exhausted_models': exhausted_list  # frontend uses this to dim model dots
+        'any_configured':    any(configured.values()) or bool(ollama_model),
+        'ollama_configured': bool(ollama_model),
+        'ollama_hint':       ollama_base or 'localhost:11434',
+        'ollama_model':      ollama_model,
+        'ollama_base_url':   ollama_base,
+        'exhausted_models':  exhausted_list
     })
 
 
@@ -1561,6 +1586,12 @@ def save_settings():
             if not key_pattern.match(val):
                 return jsonify({'error': f'Invalid key format for {field}'}), 400
             existing[env_var] = val
+
+    # Ollama / LM Studio — URL and model (not API keys, skip key_pattern check)
+    ollama_url   = sanitize_input(str(data.get('ollama_base_url', '')), 300).strip()
+    ollama_model = sanitize_input(str(data.get('ollama_model',    '')), 200).strip()
+    if ollama_url:   existing['OLLAMA_BASE_URL'] = ollama_url
+    if ollama_model: existing['OLLAMA_MODEL']    = ollama_model
 
     # Preserve SECRET_KEY
     if os.getenv('SECRET_KEY'):
@@ -2413,6 +2444,30 @@ def get_available_models():
         models = _fetch_gemini_models(keys['gemini'])
         all_models.extend(models)
 
+    # Ollama / LM Studio — local or LAN server
+    ollama_base  = keys.get('ollama_base_url', '').rstrip('/')
+    ollama_model = keys.get('ollama_model', '')
+    if ollama_base and ollama_model:
+        base_clean = ollama_base.removesuffix('/v1')
+        local_models = []
+        try:
+            r = http_req.get(f'{base_clean}/api/tags', timeout=5)
+            if r.ok:
+                local_models = [m['name'] for m in r.json().get('models', [])]
+        except Exception:
+            pass
+        if not local_models:
+            try:
+                r2 = http_req.get(f'{base_clean}/v1/models', timeout=5)
+                if r2.ok:
+                    local_models = [m['id'] for m in r2.json().get('data', [])]
+            except Exception:
+                pass
+        if ollama_model not in local_models:
+            local_models.insert(0, ollama_model)
+        for m in local_models:
+            all_models.append({'id': m, 'provider': 'ollama', 'label': m})
+
     return jsonify({
         'models':  all_models,
         'count':   len(all_models),
@@ -2486,9 +2541,21 @@ def validate_api_key():
 
         elif provider == 'ollama':
             base = sanitize_input(str(data.get('base_url', 'http://localhost:11434')), 200)
-            r = http_req.get(f'{base}/api/tags', timeout=5)
-            r.raise_for_status()
-            models = [m['name'] for m in r.json().get('models', [])]
+            base_clean = base.rstrip('/').removesuffix('/v1')
+            models = []
+            try:
+                r = http_req.get(f'{base_clean}/api/tags', timeout=5)
+                if r.ok:
+                    models = [m['name'] for m in r.json().get('models', [])]
+            except Exception:
+                pass
+            if not models:
+                try:
+                    r2 = http_req.get(f'{base_clean}/v1/models', timeout=5)
+                    if r2.ok:
+                        models = [m['id'] for m in r2.json().get('data', [])]
+                except Exception:
+                    pass
 
         else:
             return jsonify({'valid': False, 'error': f'Unknown provider: {provider}'}), 400
@@ -2550,6 +2617,27 @@ def get_model_counts():
             counts[provider] = len(models)
         except Exception:
             counts[provider] = -1
+
+    # Ollama / LM Studio
+    ollama_base  = keys.get('ollama_base_url', '').rstrip('/')
+    ollama_model = keys.get('ollama_model', '')
+    if ollama_base and ollama_model:
+        base_clean = ollama_base.removesuffix('/v1')
+        try:
+            r = http_req.get(f'{base_clean}/api/tags', timeout=5)
+            if r.ok:
+                counts['ollama'] = len(r.json().get('models', []))
+            else:
+                raise ValueError('try v1')
+        except Exception:
+            try:
+                r2 = http_req.get(f'{base_clean}/v1/models', timeout=5)
+                counts['ollama'] = len(r2.json().get('data', [])) if r2.ok else 1
+            except Exception:
+                counts['ollama'] = 1
+    else:
+        counts['ollama'] = 0
+
     return jsonify(counts)
 
 
@@ -2605,15 +2693,18 @@ def save_neuconx_settings():
 
 def call_ollama(prompt: str, history: list, keys: dict, model_id: str = '') -> dict:
     """
-    Call Ollama local server via OpenAI-compatible endpoint.
-    No API key needed — just a running Ollama instance.
+    Call Ollama / LM Studio local server via OpenAI-compatible endpoint.
+    No API key needed — just a running local server.
     """
-    base_url = keys.get('ollama_base_url', 'http://localhost:11434')
-    model    = model_id or keys.get('ollama_model', 'llama3.2')
+    base_url = keys.get('ollama_base_url', 'http://localhost:11434').rstrip('/')
+    # Ensure base_url doesn't already end with /v1
+    if base_url.endswith('/v1'):
+        base_url = base_url[:-3]
+    model = model_id or keys.get('ollama_model', 'llama3.2')
 
     if not model:
-        return {'model': f'ollama:{model}', 'response': '',
-                'error': 'No Ollama model configured — add model name in Settings'}
+        return {'model': 'ollama', 'response': '',
+                'error': 'No model configured — add model name in Settings → Local / LAN Models'}
 
     try:
         r = http_req.post(
@@ -2623,10 +2714,9 @@ def call_ollama(prompt: str, history: list, keys: dict, model_id: str = '') -> d
                 'model': model,
                 'messages': _safe_history(history) + [
                     {'role': 'user', 'content': sanitize_input(prompt, 4000)}
-                ],
-                'stream': False
+                ]
             },
-            timeout=120   # Local models can be slow
+            timeout=120
         )
         r.raise_for_status()
         content = r.json()['choices'][0]['message']['content']
@@ -2635,9 +2725,9 @@ def call_ollama(prompt: str, history: list, keys: dict, model_id: str = '') -> d
         err = str(e)
         if 'connection' in err.lower() or 'refused' in err.lower():
             return {'model': f'ollama:{model}', 'response': '',
-                    'error': 'Ollama not running — start with: ollama serve'}
+                    'error': 'Cannot connect — check the server URL in Settings → Local / LAN Models'}
         return {'model': f'ollama:{model}', 'response': '',
-                'error': f'Ollama error: {type(e).__name__}: {err[:80]}'}
+                'error': f'Local model error: {type(e).__name__}: {err[:120]}'}
 
 # ── Error Handlers ─────────────────────────────────────────────────────────────
 
