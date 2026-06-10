@@ -522,7 +522,7 @@ function newChat() {
   welcome.id = 'welcome-state';
   welcome.className = 'welcome-state';
   welcome.innerHTML = `
-    <div class="welcome-logo">⬡</div>
+    <div class="welcome-logo"><img src="/static/NCXLogo.png" alt="" class="welcome-logo-img"></div>
     <h1 class="welcome-title">NeuConX</h1>
     <p class="welcome-sub">Multiple minds. One truth. Always free.</p>
     <div id="no-keys-warning" class="no-keys-banner hidden">
@@ -1003,10 +1003,14 @@ function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized,
     rerunBtn.onclick = () => {
       const input = document.getElementById('chat-input');
       if (!input || state.isLoading) return;
+      
+      // 1. Paste the content
       input.value = content;
       autoResize(input);
       input.focus();
-      showToast('Prompt loaded — press Enter or edit before sending');
+      
+      // 2. Automatically send the message
+      sendMessage(); 
     };
     actions.appendChild(rerunBtn);
   }

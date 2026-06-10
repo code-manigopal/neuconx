@@ -7,12 +7,8 @@
 <title>NeuConX — Personal AI Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Caudex:ital,wght@0,400;0,700;1,400;1,700&family=McLaren&family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=McLaren&family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/style.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <!-- Markdown renderer — served locally, no CDN dependency -->
 <script src="/static/js/marked.min.js"></script>
 </head>
@@ -21,7 +17,7 @@
 <!-- ── Onboarding ─────────────────────────────────────────────────────────── -->
 <div id="onboarding-overlay" class="overlay {% if onboarding_complete %}hidden{% endif %}">
   <div class="onboarding-card">
-    <div class="onboarding-logo">⬡ NeuConX</div>
+    <div class="onboarding-logo"><img src="/static/NCXLogo.png" alt="" class="onboarding-logo-img"></div>
     <div class="progress-bar"><div id="onboarding-fill" class="progress-fill" style="width:14%"></div></div>
     <div id="onboarding-step-label" class="onboarding-step">1 / 7</div>
     <div id="onboarding-content">
@@ -45,7 +41,7 @@
   <!-- Left Sidebar -->
   <aside class="sidebar">
     <div class="sidebar-header">
-      <div class="logo">⬡ NeuConX</div>
+      <div class="logo"><img src="/static/NCXLogo.png" alt="" class="logo-img"></div>
       <button class="new-chat-btn" onclick="newChat()" title="New Chat">+</button>
     </div>
 
@@ -102,7 +98,7 @@
 
     <div id="messages" class="messages">
       <div class="welcome-state" id="welcome-state">
-        <div class="welcome-logo">⬡</div>
+        <div class="welcome-logo"><img src="/static/NCXLogo.png" alt="" class="welcome-logo-img"></div>
         <h1 class="welcome-title">NeuConX</h1>
         <p class="welcome-sub">Multiple minds. One truth. Always free.</p>
         <div id="no-keys-warning" class="no-keys-banner hidden">

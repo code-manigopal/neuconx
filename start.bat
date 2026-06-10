@@ -5,7 +5,7 @@ color 0B
 cls
 
 echo.
-echo  ⬡ NeuConX — Starting...
+echo  Welcome to NeuConX - Starting...
 echo.
 
 :: ── Find Python ───────────────────────────────────────────────────────────────

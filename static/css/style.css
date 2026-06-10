@@ -1346,3 +1346,13 @@ html, body {
 
 /* Remove hint text — not needed anymore */
 .persona-hint { display: none; }
+
+/* ── NCX Logo images ─────────────────────────────────────────────────────── */
+.logo { display:flex; align-items:center; }
+.logo-img { height:28px; width:auto; object-fit:contain; filter:drop-shadow(0 0 8px rgba(0,212,255,0.5)); }
+
+.welcome-logo { display:flex; align-items:center; justify-content:center; animation:pulse 3s infinite; }
+.welcome-logo-img { height:68px; max-width:220px; width:auto; object-fit:contain; filter:drop-shadow(0 0 20px rgba(0,212,255,0.5)); }
+
+.onboarding-logo { display:flex; align-items:center; justify-content:center; margin-bottom:4px; }
+.onboarding-logo-img { height:44px; width:auto; object-fit:contain; filter:drop-shadow(0 0 12px rgba(0,212,255,0.5)); }
