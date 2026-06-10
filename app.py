@@ -1259,7 +1259,7 @@ def chat():
 
     threads = [threading.Thread(target=run, args=(m,)) for m in models_to_call]
     for t in threads: t.start()
-    for t in threads: t.join(timeout=35)
+    for t in threads: t.join(timeout=130)
 
     responses = list(results.values())
     # Feature 4: Merge Engine or AI Judge
