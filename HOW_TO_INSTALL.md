@@ -248,9 +248,25 @@ fetch('/api/memory/index', {
 
 ---
 
-## Optional: Ollama (Local AI Models)
+## Optional: weasyprint (Nicer PDF Styling)
 
-Run AI models entirely on your own machine — no API key, no internet after setup.
+The **pdf_creator** skill generates real PDF files using `reportlab` by default — already included in `requirements.txt`, works everywhere, no extra setup needed.
+
+If you want slightly nicer typography for prose-heavy documents (0-1 tables), you can additionally install `weasyprint`:
+
+```bash
+pip install weasyprint --break-system-packages
+```
+
+`weasyprint` needs system libraries (Pango, Cairo, GDK-Pixbuf) that can be tricky on Windows. **This is entirely optional** — if it's not installed, or fails for any reason, NeuConX automatically falls back to `reportlab` and PDF generation keeps working. Most users can safely skip this.
+
+---
+
+## Optional: Ollama or LM Studio (Local / LAN AI Models)
+
+Run AI models entirely on your own machine — or on another PC on your network — no API key, no internet after setup.
+
+**Ollama (this machine):**
 
 ```bash
 # Mac
@@ -269,7 +285,16 @@ ollama pull phi3         # 2.3GB — fast and capable
 ollama serve
 ```
 
-Then configure in **Settings → Local Models** — enter the URL (`http://localhost:11434`) and model name.
+Then configure in **Settings → Local / LAN Models** — enter the URL (`http://localhost:11434`) and model name → Save.
+
+**LM Studio (this machine, or another PC on your network):**
+
+1. Download from [lmstudio.ai](https://lmstudio.ai), load a model, open the **Local Server** tab
+2. Turn on **"Load models on demand"** so all your downloaded models are callable, not just the active one
+3. Visit `http://<host>:1234/v1/models` to get the exact model `id`
+4. In **Settings → Local / LAN Models**, enter the server URL and that exact model `id` → Save
+
+LM Studio is the better choice if you want to run models on a separate, more powerful PC — Ollama and LM Studio are interchangeable from NeuConX's perspective; it auto-detects which one is running.
 
 Hardware requirements:
 

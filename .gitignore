@@ -15,6 +15,7 @@ credentials.json
 # ── User Data (stays local, never cloud) ─────────────────────────────────────
 data/conversations/         # Private chat history
 data/profile.json           # Personal profile (name, goals, etc.)
+data/generated/              # Generated PDF documents (user content)
 memory/                     # ChromaDB vector store (Phase 5)
 
 # ── Python Build Artifacts ────────────────────────────────────────────────────

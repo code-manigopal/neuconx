@@ -3,6 +3,13 @@
 ## Purpose
 Generate well-structured, formatted documents ready to be saved as PDF or Word. Used for reports, proposals, letters, study notes, and structured content.
 
+## Real PDF Generation
+This skill is active for **every message** — NeuConX automatically renders your entire response into a real `.pdf` file after you answer, using the structure below. Headings become real heading styles, tables become real tables, code blocks get monospace formatting, all in the user's chosen theme (NCX Dark or Clean Professional). The file is attached to the chat response with an inline preview and download link.
+
+Because every response becomes a PDF, **structure your output exactly as you want the PDF to look** — every heading, list, and table in your markdown becomes that element in the generated PDF. Don't describe the document ("I'll create a section called..."); just write it directly.
+
+**Do not suggest writing a separate Python/fpdf2/reportlab script to generate a PDF** — that's redundant, NeuConX already converts this response to PDF natively. If the user asks a normal question, just answer it well-structured; it'll become a clean PDF automatically without you needing to mention PDFs, scripts, or file generation at all.
+
 ## Document Structure Rules
 When asked to create a document, always follow this structure:
 

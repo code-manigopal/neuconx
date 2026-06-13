@@ -22,3 +22,13 @@ urllib3==2.2.2
 # App works fine without these — semantic search just stays disabled.
 chromadb==0.6.3
 sentence-transformers==3.2.1
+
+# ── Feature: pdf_creator skill -> real PDF file generation ────────────────────
+# reportlab: pure-Python, always works, no system dependencies. Required.
+reportlab==4.2.5
+# weasyprint: HTML/CSS -> PDF, nicer styling, used when available.
+# Needs system libraries (Pango/Cairo/GDK-Pixbuf) — install separately if
+# wanted; the app falls back to reportlab automatically if this is missing
+# or fails at runtime. Safe to skip on Windows if those libs aren't installed.
+#   pip install weasyprint --break-system-packages
+# weasyprint==63.1

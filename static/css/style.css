@@ -172,6 +172,20 @@ html, body {
 .skill-toggle.on::after { left: 16px; background: var(--cyan); }
 .skill-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.pdf-theme-select {
+  flex-shrink: 0;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text-mid);
+  font-size: 9px;
+  font-family: var(--font-mono);
+  border-radius: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+  max-width: 70px;
+}
+.pdf-theme-select:focus { outline: none; border-color: var(--cyan); }
+
 .upload-skill-btn {
   display: block; margin: 6px 16px 2px;
   padding: 5px 12px; font-size: 11px; color: var(--text-dim);
@@ -989,6 +1003,48 @@ html, body {
 .bubble-markdown pre::-webkit-scrollbar { height: 3px; }
 .bubble-markdown pre::-webkit-scrollbar-thumb { background: var(--border); }
 
+/* ── Per-block copy buttons (code blocks & tables) ────────────────────────── */
+.copyable-block {
+  position: relative;
+}
+.copyable-block.copyable-pre pre {
+  margin: 0;
+}
+.copyable-block.copyable-table {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.copyable-block.copyable-table table {
+  margin: 0;
+}
+.block-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(10, 21, 32, 0.85);
+  border: 1px solid var(--border);
+  color: var(--text-mid);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.copyable-block:hover .block-copy-btn {
+  opacity: 1;
+}
+.block-copy-btn:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+.block-copy-btn.copied {
+  color: #00e896;
+  border-color: #00e896;
+  opacity: 1;
+}
+
 .bubble-markdown blockquote {
   border-left: 3px solid var(--cyan);
   margin: 8px 0;
@@ -1271,6 +1327,125 @@ html, body {
   background: rgba(255,255,255,0.05);
   border-color: var(--border);
   color: var(--text-mid);
+}
+
+/* ── Export dropdown (PDF / DOCX / TXT) ──────────────────────────────────── */
+.export-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+.export-menu {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  background: #0f1924;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 80px;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.export-menu.open {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.export-menu-item {
+  background: none;
+  border: none;
+  color: var(--text-mid);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-align: left;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.export-menu-item:hover {
+  background: rgba(0,212,255,0.1);
+  color: var(--cyan);
+}
+
+/* ── Generated PDF file card (pdf_creator skill) ─────────────────────────── */
+.generated-file-card {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f1924;
+  overflow: hidden;
+  max-width: 420px;
+}
+.generated-file-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.generated-file-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+.generated-file-info {
+  flex: 1;
+  min-width: 0;
+}
+.generated-file-name {
+  font-size: 12px;
+  color: var(--text-mid);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.generated-file-sub {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.generated-file-download {
+  flex-shrink: 0;
+  background: var(--cyan-dim);
+  border: 1px solid var(--cyan-glow);
+  color: var(--cyan);
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 5px 10px;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.generated-file-download:hover {
+  background: var(--cyan-glow);
+}
+.generated-file-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 6px 12px;
+  cursor: pointer;
+  text-align: center;
+  transition: color 0.15s, background 0.15s;
+}
+.generated-file-toggle:hover {
+  color: var(--cyan);
+  background: rgba(0,212,255,0.04);
+}
+.generated-file-preview {
+  border-top: 1px solid var(--border);
+}
+.generated-file-preview iframe {
+  width: 100%;
+  height: 480px;
+  border: none;
+  display: block;
+  background: #fff;
 }
 
 /* ── Stop button state ──────────────────────────────────────────────────── */

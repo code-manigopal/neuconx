@@ -54,6 +54,7 @@ const state = {
   onboardingAnswers: {},
   personalized:  true,
   pinnedModel:   null,   // null = auto routing, {provider,modelId} = force specific model
+  pdfTheme:      'professional', // theme for pdf_creator skill-generated files
   abortController: null  // for stop button
 };
 
@@ -417,6 +418,10 @@ function hideSettings()  { document.getElementById('settings-modal').classList.a
 
 document.addEventListener('click', e => {
   if (e.target === document.getElementById('settings-modal')) hideSettings();
+  // Close any open export dropdown menus when clicking elsewhere
+  if (!e.target.closest('.export-dropdown')) {
+    document.querySelectorAll('.export-menu.open').forEach(m => m.classList.remove('open'));
+  }
 });
 
 // ── Conversations ─────────────────────────────────────────────────────────────
@@ -593,6 +598,29 @@ async function loadSkills() {
 
       item.appendChild(toggle);
       item.appendChild(nameWrap);
+
+      // PDF theme picker — shown only for the pdf_creator skill
+      if (skill.filename === 'pdf_creator.md') {
+        const themeSelect = document.createElement('select');
+        themeSelect.className = 'pdf-theme-select';
+        themeSelect.title = 'Theme for generated PDF files';
+        themeSelect.innerHTML = `
+          <option value="professional">Clean Pro</option>
+          <option value="ncx">NCX Dark</option>
+        `;
+        themeSelect.value = state.pdfTheme;
+        themeSelect.style.display = toggle.classList.contains('on') ? 'block' : 'none';
+        themeSelect.onclick = (e) => e.stopPropagation();
+        themeSelect.onchange = () => { state.pdfTheme = themeSelect.value; };
+
+        // Show/hide the theme picker alongside the existing toggle handler
+        toggle.addEventListener('click', () => {
+          themeSelect.style.display = toggle.classList.contains('on') ? 'block' : 'none';
+        });
+
+        item.appendChild(themeSelect);
+      }
+
       item.appendChild(editBtn);
       list.appendChild(item);
     });
@@ -797,6 +825,7 @@ async function sendMessage() {
       skills_active: Array.from(state.activeSkills),
       personalized:  state.personalized,
       pinned_model:  state.pinnedModel,
+      pdf_theme:     state.pdfTheme,
       autotune:      tune   // {temperature, top_p, context}
     };
 
@@ -809,7 +838,7 @@ async function sendMessage() {
     removeThinking(thinkId);
 
     const answer = data.final_answer || 'No response received.';
-    addMessage('ai', answer, data.tier_used, data.models_used, data.models_called, data.personalized, message);
+    addMessage('ai', answer, data.tier_used, data.models_used, data.models_called, data.personalized, message, data.generated_file);
     state.messages.push({ role: 'assistant', content: answer, timestamp: new Date().toISOString() });
 
     updateModelResponses(data.model_responses || []);
@@ -886,10 +915,497 @@ function renderMarkdown(text) {
   }
 }
 
+// ── Per-block copy buttons ────────────────────────────────────────────────────
+// Adds a small copy icon to every <pre> (code block) and <table> rendered
+// inside a markdown container, without touching any other rendering logic.
+function addCopyButtons(container) {
+  if (!container) return;
+
+  // Code blocks
+  container.querySelectorAll('pre').forEach(pre => {
+    if (pre.parentElement && pre.parentElement.classList.contains('copyable-block')) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'copyable-block copyable-pre';
+
+    const btn = document.createElement('button');
+    btn.className = 'block-copy-btn';
+    btn.title = 'Copy code';
+    btn.textContent = '⎘';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const codeEl = pre.querySelector('code');
+      const text = codeEl ? codeEl.innerText : pre.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '⎘'; btn.classList.remove('copied'); }, 1500);
+      });
+    };
+
+    pre.parentNode.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
+    wrapper.appendChild(btn);
+  });
+
+  // Tables — copy as TSV (paste-friendly into Excel/Sheets)
+  container.querySelectorAll('table').forEach(table => {
+    if (table.parentElement && table.parentElement.classList.contains('copyable-block')) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'copyable-block copyable-table';
+
+    const btn = document.createElement('button');
+    btn.className = 'block-copy-btn';
+    btn.title = 'Copy table';
+    btn.textContent = '⎘';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const rows = Array.from(table.querySelectorAll('tr')).map(tr =>
+        Array.from(tr.querySelectorAll('th,td')).map(cell => cell.innerText.trim()).join('\t')
+      );
+      navigator.clipboard.writeText(rows.join('\n')).then(() => {
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '⎘'; btn.classList.remove('copied'); }, 1500);
+      });
+    };
+
+    table.parentNode.insertBefore(wrapper, table);
+    wrapper.appendChild(table);
+    wrapper.appendChild(btn);
+  });
+}
+
 function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// ── Standalone markdown block tokenizer (for exports) ─────────────────────────
+// The bundled marked.min.js is a custom lightweight parser with only .parse(),
+// no .lexer(). This mirrors its block-splitting logic so PDF/DOCX exports get
+// real structured tokens (heading/paragraph/ul/ol/table/code/blockquote/hr)
+// instead of one giant paragraph.
+function simpleMdTokenize(src) {
+  const tokens = [];
+  const lines = src.split('\n');
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (!line.trim()) { i++; continue; }
+
+    // Fenced code block
+    if (/^```/.test(line)) {
+      const lang = line.slice(3).trim();
+      const code = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { code.push(lines[i]); i++; }
+      i++;
+      tokens.push({ type: 'code', lang, text: code.join('\n') });
+      continue;
+    }
+
+    // Heading
+    const hm = line.match(/^(#{1,6})\s+(.+)$/);
+    if (hm) {
+      tokens.push({ type: 'heading', depth: hm[1].length, text: hm[2] });
+      i++;
+      continue;
+    }
+
+    // HR
+    if (/^(?:---+|===+|\*\*\*+)\s*$/.test(line.trim())) {
+      tokens.push({ type: 'hr' });
+      i++;
+      continue;
+    }
+
+    // Blockquote
+    if (/^> /.test(line)) {
+      const bq = [];
+      while (i < lines.length && /^> /.test(lines[i])) { bq.push(lines[i].slice(2)); i++; }
+      tokens.push({ type: 'blockquote', text: bq.join('\n') });
+      continue;
+    }
+
+    // Unordered list
+    if (/^[\-\*\+] /.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[\-\*\+] /.test(lines[i])) { items.push(lines[i].replace(/^[\-\*\+] /, '')); i++; }
+      tokens.push({ type: 'ul', items });
+      continue;
+    }
+
+    // Ordered list
+    if (/^\d+[\.\)] /.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+[\.\)] /.test(lines[i])) { items.push(lines[i].replace(/^\d+[\.\)] /, '')); i++; }
+      tokens.push({ type: 'ol', items });
+      continue;
+    }
+
+    // Table
+    if (/\|/.test(line) && i + 1 < lines.length && /\|[\s\-:]+\|/.test(lines[i+1])) {
+      const headers = lines[i].split('|').map(c => c.trim()).filter(Boolean);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) {
+        rows.push(lines[i].split('|').map(c => c.trim()).filter(Boolean));
+        i++;
+      }
+      tokens.push({ type: 'table', headers, rows });
+      continue;
+    }
+
+    // Paragraph
+    const pLines = [];
+    while (i < lines.length && lines[i].trim() &&
+           !/^#{1,6} /.test(lines[i]) &&
+           !/^```/.test(lines[i]) &&
+           !/^[\-\*\+] /.test(lines[i]) &&
+           !/^\d+[\.\)] /.test(lines[i]) &&
+           !/^> /.test(lines[i]) &&
+           !/^(?:---+|===+|\*\*\*+)\s*$/.test(lines[i].trim()) &&
+           !(/\|/.test(lines[i]) && i + 1 < lines.length && /\|[\s\-:]+\|/.test(lines[i+1]))) {
+      pLines.push(lines[i]);
+      i++;
+    }
+    if (pLines.length) tokens.push({ type: 'paragraph', text: pLines.join('\n') });
+  }
+  return tokens;
+}
+
+// ── Export AI message to PDF / DOCX / TXT ─────────────────────────────────────
+// Uses simpleMdTokenize() to get structured tokens (headings, paragraphs, lists,
+// tables, code blocks) so PDF/DOCX output preserves real document structure
+// instead of dumping raw markdown text.
+
+function _exportFilename(ext) {
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  return `neuconx-response-${stamp}.${ext}`;
+}
+
+function _downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportAsTXT(content) {
+  // Strip markdown syntax markers for a clean plain-text read
+  const text = content
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')
+    .replace(/^\s*[-*+]\s+/gm, '• ')
+    .replace(/^>\s?/gm, '');
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  _downloadBlob(blob, _exportFilename('txt'));
+}
+
+function exportAsPDF(content) {
+  if (typeof window.jspdf === 'undefined') {
+    showToast('PDF export unavailable — library not loaded');
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+
+  // jsPDF's built-in fonts (helvetica/courier) have no emoji glyphs and no
+  // LaTeX renderer — strip/convert so output doesn't show garbled boxes.
+  const cleanPdfText = (text) => {
+    if (!text) return '';
+    return text
+      // Common inline LaTeX -> plain text equivalents
+      .replace(/\$\\rightarrow\$/g, '->')
+      .replace(/\$\\leftrightarrow\$/g, '<->')
+      .replace(/\$\\sim\$/g, '~')
+      .replace(/\$\\approx\$/g, '~=')
+      .replace(/\\rightarrow/g, '->')
+      .replace(/\\leftrightarrow/g, '<->')
+      .replace(/\\sim/g, '~')
+      .replace(/\\approx/g, '~=')
+      // Strip any remaining $...$ math delimiters, keep inner text
+      .replace(/\$([^$]+)\$/g, '$1')
+      // Strip backslash-escaped LaTeX commands like \uparrow, \downarrow
+      .replace(/\\[a-zA-Z]+/g, '')
+      // Strip emoji and other symbols outside the Basic Latin/Latin-1 + common punctuation range
+      // (keeps letters, numbers, standard punctuation; removes pictographic/symbol code points)
+      .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
+      .replace(/[\u{2190}-\u{2BFF}]/gu, '') // arrows, misc symbols, dingbats
+      .replace(/[\u{2600}-\u{27BF}]/gu, '') // misc symbols & pictographs, dingbats
+      .replace(/[\u{FE00}-\u{FE0F}]/gu, '') // variation selectors
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  };
+
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 48;
+  const maxW = pageW - margin * 2;
+  let y = margin;
+
+  const ensureSpace = (lineH) => {
+    if (y + lineH > pageH - margin) {
+      doc.addPage();
+      y = margin;
+    }
+  };
+
+  const writeWrapped = (text, fontSize, style, lineH, color) => {
+    doc.setFont('helvetica', style || 'normal');
+    doc.setFontSize(fontSize);
+    if (color) doc.setTextColor(...color); else doc.setTextColor(20, 20, 20);
+    const lines = doc.splitTextToSize(cleanPdfText(text), maxW);
+    lines.forEach(line => {
+      ensureSpace(lineH);
+      doc.text(line, margin, y);
+      y += lineH;
+    });
+  };
+
+  const tokens = simpleMdTokenize(content);
+
+  tokens.forEach(token => {
+    switch (token.type) {
+      case 'heading': {
+        const sizes = { 1: 20, 2: 16, 3: 13, 4: 12, 5: 11, 6: 11 };
+        y += 6;
+        writeWrapped(token.text, sizes[token.depth] || 12, 'bold', (sizes[token.depth] || 12) + 4, [0, 130, 150]);
+        y += 4;
+        break;
+      }
+      case 'paragraph':
+        writeWrapped((token.text || '').replace(/\*\*/g, '').replace(/\*/g, ''), 11, 'normal', 15);
+        y += 6;
+        break;
+      case 'ul':
+      case 'ol':
+        (token.items || []).forEach((item, idx) => {
+          const prefix = token.type === 'ol' ? `${idx + 1}. ` : '• ';
+          writeWrapped(prefix + String(item).replace(/\*\*/g, '').replace(/\*/g, ''), 11, 'normal', 15);
+        });
+        y += 6;
+        break;
+      case 'code':
+        ensureSpace(20);
+        doc.setFillColor(245, 247, 248);
+        doc.setDrawColor(220, 224, 228);
+        const codeLines = doc.splitTextToSize(token.text || '', maxW - 12);
+        const blockH = codeLines.length * 12 + 10;
+        ensureSpace(blockH);
+        doc.rect(margin, y - 8, maxW, blockH, 'FD');
+        doc.setFont('courier', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(40, 40, 40);
+        codeLines.forEach(line => {
+          doc.text(line, margin + 6, y);
+          y += 12;
+        });
+        y += 10;
+        break;
+      case 'table': {
+        const cellPad = 4;
+        const cols = token.headers.length;
+        const colW = maxW / cols;
+        const lineH = 11;
+        doc.setFontSize(9);
+
+        // Header row (headers rarely wrap, but handle it anyway)
+        const headerLines = token.headers.map(cell =>
+          doc.splitTextToSize(cleanPdfText(String(cell || '')).replace(/\*\*/g, ''), colW - cellPad * 2)
+        );
+        const headerRowH = Math.max(...headerLines.map(l => l.length), 1) * lineH + 6;
+        ensureSpace(headerRowH);
+        doc.setFillColor(0, 180, 200);
+        doc.rect(margin, y - 10, maxW, headerRowH, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        headerLines.forEach((cellLines, i) => {
+          cellLines.forEach((line, li) => {
+            doc.text(line, margin + i * colW + cellPad, y + li * lineH);
+          });
+        });
+        y += headerRowH;
+
+        // Body rows — wrap each cell, size row to tallest cell
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(20, 20, 20);
+        (token.rows || []).forEach((row, ri) => {
+          const cellLines = row.map(cell =>
+            doc.splitTextToSize(cleanPdfText(String(cell || '')).replace(/\*\*/g, ''), colW - cellPad * 2)
+          );
+          const rowH = Math.max(...cellLines.map(l => l.length), 1) * lineH + 6;
+          ensureSpace(rowH);
+          if (ri % 2 === 1) {
+            doc.setFillColor(245, 247, 248);
+            doc.rect(margin, y - 10, maxW, rowH, 'F');
+          }
+          cellLines.forEach((lines, i) => {
+            lines.forEach((line, li) => {
+              doc.text(line, margin + i * colW + cellPad, y + li * lineH);
+            });
+          });
+          y += rowH;
+        });
+        y += 8;
+        break;
+      }
+      case 'blockquote':
+        writeWrapped((token.text || '').replace(/\*\*/g, ''), 11, 'italic', 15, [90, 100, 110]);
+        y += 6;
+        break;
+      case 'hr':
+        ensureSpace(10);
+        doc.setDrawColor(220, 224, 228);
+        doc.line(margin, y, pageW - margin, y);
+        y += 12;
+        break;
+      case 'math':
+        writeWrapped(token.text || '', 11, 'italic', 15);
+        y += 6;
+        break;
+      default:
+        if (token.text) writeWrapped(token.text, 11, 'normal', 15);
+    }
+  });
+
+  doc.save(_exportFilename('pdf'));
+}
+
+async function exportAsDOCX(content) {
+  if (typeof docx === 'undefined') {
+    showToast('DOCX export unavailable — library not loaded');
+    return;
+  }
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell,
+          WidthType, BorderStyle, AlignmentType } = docx;
+
+  const tokens = simpleMdTokenize(content);
+
+  const headingMap = {
+    1: HeadingLevel.HEADING_1,
+    2: HeadingLevel.HEADING_2,
+    3: HeadingLevel.HEADING_3,
+    4: HeadingLevel.HEADING_4,
+    5: HeadingLevel.HEADING_5,
+    6: HeadingLevel.HEADING_6,
+  };
+
+  // Parse simple **bold** / *italic* into TextRuns
+  const toRuns = (text) => {
+    const runs = [];
+    const re = /(\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`)/g;
+    let last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) runs.push(new TextRun(text.slice(last, m.index)));
+      if (m[2] !== undefined) runs.push(new TextRun({ text: m[2], bold: true }));
+      else if (m[3] !== undefined) runs.push(new TextRun({ text: m[3], italics: true }));
+      else if (m[4] !== undefined) runs.push(new TextRun({ text: m[4], font: 'Courier New', shading: { fill: 'F0F0F0' } }));
+      last = re.lastIndex;
+    }
+    if (last < text.length) runs.push(new TextRun(text.slice(last)));
+    return runs.length ? runs : [new TextRun(text)];
+  };
+
+  const children = [];
+
+  tokens.forEach(token => {
+    switch (token.type) {
+      case 'heading':
+        children.push(new Paragraph({
+          children: toRuns(token.text),
+          heading: headingMap[token.depth] || HeadingLevel.HEADING_4,
+        }));
+        break;
+      case 'paragraph':
+        children.push(new Paragraph({ children: toRuns(token.text || '') }));
+        break;
+      case 'ul':
+      case 'ol':
+        (token.items || []).forEach((item, idx) => {
+          if (token.type === 'ol') {
+            children.push(new Paragraph({
+              children: [new TextRun(`${idx + 1}. `), ...toRuns(String(item || ''))],
+            }));
+          } else {
+            children.push(new Paragraph({
+              children: toRuns(String(item || '')),
+              bullet: { level: 0 },
+            }));
+          }
+        });
+        break;
+      case 'code':
+        (token.text || '').split('\n').forEach(line => {
+          children.push(new Paragraph({
+            children: [new TextRun({ text: line || ' ', font: 'Courier New', size: 18 })],
+            shading: { fill: 'F5F7F8' },
+          }));
+        });
+        break;
+      case 'table': {
+        const borders = {
+          top: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+          bottom: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+          left: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+          right: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+        };
+        const headerRow = new TableRow({
+          children: token.headers.map(cell => new TableCell({
+            children: [new Paragraph({ children: toRuns(String(cell || '')) })],
+            shading: { fill: '00B4C8' },
+            borders,
+          })),
+        });
+        const bodyRows = (token.rows || []).map(row => new TableRow({
+          children: row.map(cell => new TableCell({
+            children: [new Paragraph({ children: toRuns(String(cell || '')) })],
+            borders,
+          })),
+        }));
+        children.push(new Table({
+          rows: [headerRow, ...bodyRows],
+          width: { size: 100, type: WidthType.PERCENTAGE },
+        }));
+        children.push(new Paragraph({ text: '' }));
+        break;
+      }
+      case 'blockquote':
+        children.push(new Paragraph({
+          children: toRuns(token.text || ''),
+          indent: { left: 480 },
+          style: 'IntenseQuote',
+        }));
+        break;
+      case 'hr':
+        children.push(new Paragraph({
+          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: 'CCCCCC' } },
+        }));
+        break;
+      case 'space':
+        break;
+      default:
+        if (token.text) children.push(new Paragraph({ children: toRuns(token.text) }));
+    }
+  });
+
+  const doc = new Document({
+    sections: [{ properties: {}, children }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  _downloadBlob(blob, _exportFilename('docx'));
 }
 
 // ── STM (Semantic Transformation Modules) ────────────────────────────────────
@@ -955,7 +1471,7 @@ function applySTM(text) {
   return result;
 }
 
-function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized, originalPrompt) {
+function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized, originalPrompt, generatedFile) {
   // Apply STM transforms to AI responses before rendering
   const displayContent = (role === 'ai') ? applySTM(content) : content;
 
@@ -972,6 +1488,7 @@ function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized,
   if (role === 'ai') {
     bubble.classList.add('bubble-markdown');
     bubble.innerHTML = renderMarkdown(displayContent);
+    addCopyButtons(bubble);
   } else {
     bubble.textContent = displayContent;
   }
@@ -1018,6 +1535,52 @@ function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized,
   }
 
   if (role === 'ai') {
+    // Export dropdown — PDF / DOCX / TXT
+    const exportWrap = document.createElement('div');
+    exportWrap.className = 'export-dropdown';
+
+    const exportBtn = document.createElement('button');
+    exportBtn.className = 'msg-action-btn';
+    exportBtn.title = 'Download as...';
+    exportBtn.textContent = '⬇';
+    exportBtn.onclick = (e) => {
+      e.stopPropagation();
+      // Close any other open export menus first
+      document.querySelectorAll('.export-menu.open').forEach(m => {
+        if (m !== menu) m.classList.remove('open');
+      });
+      menu.classList.toggle('open');
+    };
+
+    const menu = document.createElement('div');
+    menu.className = 'export-menu';
+
+    const exportOptions = [
+      { label: 'PDF',  ext: 'pdf',  fn: exportAsPDF },
+      { label: 'DOCX', ext: 'docx', fn: exportAsDOCX },
+      { label: 'TXT',  ext: 'txt',  fn: exportAsTXT },
+    ];
+    exportOptions.forEach(opt => {
+      const item = document.createElement('button');
+      item.className = 'export-menu-item';
+      item.textContent = opt.label;
+      item.onclick = (e) => {
+        e.stopPropagation();
+        menu.classList.remove('open');
+        try {
+          opt.fn(content);
+          showToast(`Exporting ${opt.label}...`);
+        } catch (err) {
+          showToast(`Export failed: ${err.message || 'unknown error'}`);
+        }
+      };
+      menu.appendChild(item);
+    });
+
+    exportWrap.appendChild(exportBtn);
+    exportWrap.appendChild(menu);
+    actions.appendChild(exportWrap);
+
     // Thumbs up
     const upBtn = document.createElement('button');
     upBtn.className   = 'msg-action-btn';
@@ -1068,8 +1631,86 @@ function addMessage(role, content, tier, modelsUsed, modelsCalled, personalized,
     wrapper.appendChild(meta);
   }
 
+  // ── Generated PDF file card (pdf_creator skill) ────────────────────────────
+  if (role === 'ai' && generatedFile && generatedFile.url) {
+    wrapper.appendChild(buildGeneratedFileCard(generatedFile));
+  }
+
   msgs.appendChild(wrapper);
   msgs.scrollTop = msgs.scrollHeight;
+}
+
+function buildGeneratedFileCard(file) {
+  const card = document.createElement('div');
+  card.className = 'generated-file-card';
+
+  const header = document.createElement('div');
+  header.className = 'generated-file-header';
+
+  const icon = document.createElement('span');
+  icon.className = 'generated-file-icon';
+  icon.textContent = '📄';
+
+  const info = document.createElement('div');
+  info.className = 'generated-file-info';
+
+  const name = document.createElement('div');
+  name.className = 'generated-file-name';
+  name.textContent = file.filename; // textContent — XSS safe
+
+  const sub = document.createElement('div');
+  sub.className = 'generated-file-sub';
+  const sizeKb = file.size ? `${Math.max(1, Math.round(file.size / 1024))} KB` : '';
+  sub.textContent = [sizeKb, file.theme ? `${file.theme} theme` : ''].filter(Boolean).join(' · ');
+
+  info.appendChild(name);
+  info.appendChild(sub);
+
+  const downloadBtn = document.createElement('a');
+  downloadBtn.className = 'generated-file-download';
+  downloadBtn.href = file.url;
+  downloadBtn.download = file.filename;
+  downloadBtn.title = 'Download PDF';
+  downloadBtn.textContent = '⬇ Download';
+
+  header.appendChild(icon);
+  header.appendChild(info);
+  header.appendChild(downloadBtn);
+  card.appendChild(header);
+
+  // Inline preview — collapsible to avoid pushing the conversation around by default
+  const toggle = document.createElement('button');
+  toggle.className = 'generated-file-toggle';
+  toggle.textContent = 'Show preview';
+  toggle.type = 'button';
+
+  const previewWrap = document.createElement('div');
+  previewWrap.className = 'generated-file-preview';
+  previewWrap.style.display = 'none';
+
+  let loaded = false;
+  toggle.onclick = () => {
+    const showing = previewWrap.style.display !== 'none';
+    if (showing) {
+      previewWrap.style.display = 'none';
+      toggle.textContent = 'Show preview';
+    } else {
+      if (!loaded) {
+        const iframe = document.createElement('iframe');
+        iframe.src = file.url;
+        iframe.title = file.filename;
+        previewWrap.appendChild(iframe);
+        loaded = true;
+      }
+      previewWrap.style.display = 'block';
+      toggle.textContent = 'Hide preview';
+    }
+  };
+
+  card.appendChild(toggle);
+  card.appendChild(previewWrap);
+
+  return card;
 }
 
 function addThinking() {
@@ -1146,6 +1787,7 @@ function updateModelResponses(responses) {
       const text = document.createElement('div');
       text.className = 'model-response-text bubble-markdown';
       text.innerHTML = renderMarkdown(r.response || '');
+      addCopyButtons(text);
       card.appendChild(text);
     }
 

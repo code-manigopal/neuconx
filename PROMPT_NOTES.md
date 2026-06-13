@@ -135,6 +135,20 @@ When Gemini hits its 1,500/day cap (`ResourceExhausted` error):
 
 ---
 
+## Parallel Collector Timeout (Bug Fix)
+
+All models in a tier are called in parallel threads, then the main thread waits with `t.join(timeout=...)` before collecting results for the merge engine.
+
+**The bug:** this was originally `timeout=35`. Cloud models (Groq, Cerebras, OpenRouter, Gemini, NVIDIA) typically respond in 2-10s, so 35s was plenty for them — but a local/LAN model (Ollama/LM Studio) can take up to 120s, especially on cold-load. The collector moved on at 35s, the local model's response arrived *after* results were already gathered, and it was silently dropped from the merge.
+
+**Symptom:** with 2 models pinned/auto-selected (e.g. one OpenRouter model + one local model), only the OpenRouter response would appear — the merge engine correctly saw "1 valid response" and returned it directly (this is correct merge-engine behavior, but the input set was wrong).
+
+**Fix:** collector timeout raised to `timeout=130` — just above the local model's 120s request timeout — so every thread has a chance to finish before responses are gathered. Cloud-only requests are unaffected (they still return in seconds; the join simply returns early once the thread completes).
+
+**Net effect:** any tier that includes a local/LAN model now reliably merges it with the other responses instead of dropping it.
+
+---
+
 ## Prompting Tips for NeuConX
 
 ### Get Tier 3 (all models) automatically
@@ -297,16 +311,32 @@ Return ONLY the best response text verbatim. Do not add commentary.
 
 ---
 
-## Ollama / Local Model Support
+## Ollama / LM Studio — Local & LAN Model Support
 
-Ollama runs entirely on your machine. No API key needed. Configure in **Settings → Local Models**.
+Runs entirely on local hardware — yours or anyone else's on the same network. No API key needed. Configure in **Settings → Local / LAN Models**.
 
-**Setup:**
+**Two supported backends:**
+
+| Backend | Endpoint used | Notes |
+|---|---|---|
+| **Ollama** | `/api/tags` (list), `/v1/chat/completions` (chat) | Native Ollama API |
+| **LM Studio** | `/v1/models` (list), `/v1/chat/completions` (chat) | OpenAI-compatible — also works for Jan, Llamafile, etc. |
+
+Validation tries `/api/tags` first, then falls back to `/v1/models` automatically — no need to specify which backend you're using.
+
+**Setup — Ollama (same machine):**
 1. Download from [ollama.com/download](https://ollama.com/download)
 2. Run: `ollama pull llama3.2` (or any supported model)
 3. Start server: `ollama serve` (runs on `http://localhost:11434`)
-4. Set URL and model name in Settings → Local Models
-5. Click **Test Connection** to validate
+4. Set URL `http://localhost:11434` and model name in Settings → Local / LAN Models
+5. Click **Test Connection** then **Save**
+
+**Setup — LM Studio (same machine or LAN/another PC):**
+1. Open LM Studio → **Local Server** tab → load a model
+2. Enable **"Load models on demand"** so any model in your library can be called via API (otherwise only the currently-loaded model responds)
+3. Note the server URL shown (e.g. `http://192.168.x.x:1234`)
+4. In NeuConX Settings → Local / LAN Models, enter that exact URL (no `/v1` suffix needed — added automatically) and the exact model `id` string from `http://<url>/v1/models`
+5. Click **Test Connection** then **Save**
 
 **Recommended models by hardware:**
 
@@ -317,16 +347,22 @@ Ollama runs entirely on your machine. No API key needed. Configure in **Settings
 | 32GB | `llama3.1:13b`, `codellama:13b` |
 | 64GB+ | `llama3.3:70b`, `qwen2.5:72b` |
 
-**Ollama in routing:**
-- Participates in auto-routing when `OLLAMA_MODEL` is set in `.env`
-- Works with model pin selector (shows in dropdown)
+**In routing:**
+- Participates in auto-routing when both `OLLAMA_BASE_URL` and `OLLAMA_MODEL` are set in `.env`
+- Live model list appears in the pin dropdown under **🖥 Local / LAN**, grouped separately from cloud providers
+- Header status dot shows live model count (green = local/free)
 - Can be selected as AI Judge
-- Timeout set to 120s (local models are slower)
-- Error messages distinguish between "Ollama not running" and actual model errors
+- Request timeout 120s; the parallel-call collector waits up to 130s so slow local responses still make it into the merge (see Merge Engine notes below)
+- Error messages distinguish "cannot connect" (server down/wrong URL) vs "timed out" (model still loading — LM Studio cold-loads can take 1-3 min on first call) vs other model errors
 
-**Prompting note:** Local models through Ollama use the same profile injection and context enrichment as cloud models. Personalization works identically.
+**Common gotcha — 400 Bad Request:** Almost always a model name mismatch. The `id` in your Settings must match **exactly** one of the entries returned by `http://<your-url>/v1/models`. Copy-paste it, don't retype.
+
+**Common gotcha — ReadTimeout:** LM Studio is cold-loading the model into VRAM. Send one test message directly in LM Studio's own chat UI first to warm it up, then NeuConX calls will be fast.
+
+**Prompting note:** Local models use the same profile injection and context enrichment as cloud models. Personalization works identically.
 
 ---
+
 
 ## API Key Validation
 
@@ -383,10 +419,10 @@ AI responses now render full markdown in both the main chat bubble and the right
 - **Headers** `#` `##` `###` — cyan-colored, sized
 - **Bold** `**text**` and **Italic** `*text*`
 - **Inline code** `` `code` `` — dark background, monospace
-- **Code blocks** ` ```lang ``` ` — dark panel, scrollable
+- **Code blocks** ` ```lang ``` ` — dark panel, scrollable, with a hover copy button
 - **Unordered lists** `- item`
 - **Ordered lists** `1. item`
-- **Tables** `| col |`
+- **Tables** `| col |` — with a hover copy button (copies as TSV, paste-ready into Excel/Sheets)
 - **Blockquotes** `> text` — cyan left border
 - **Horizontal rules** `---`
 - **Links** — open in new tab
@@ -395,7 +431,77 @@ AI responses now render full markdown in both the main chat bubble and the right
 
 **Collapsed text handling:** Old saved conversations had newlines stripped by `bleach.clean()`. The custom parser (`marked.min.js`) includes a pre-pass that reconstructs structure from collapsed single-line markdown — detecting `### Heading`, `1. Item`, `* Bullet` patterns inline and inserting proper block breaks.
 
-**No CDN:** `marked.min.js` is a self-contained 6KB parser bundled locally. No external network calls for rendering.
+**No CDN:** `marked.min.js` is a self-contained parser bundled locally. No external network calls for rendering.
+
+**Table-after-paragraph fix:** All three markdown tokenizers in the codebase (`marked.min.js` for chat bubbles, `simpleMdTokenize` in `app.js` for exports, `tokenize_markdown` in `doc_generator.py` for PDF generation) previously had a shared bug — if a table immediately followed a text line with no blank line between them (e.g. `Some label:\n| Col1 | Col2 |\n|---|---|`), the paragraph-consuming loop didn't look ahead for a table separator, so the entire table got swallowed as raw `|`-pipe text inside the paragraph. All three tokenizers now check whether the *next* line is a table separator (`|[\s\-:]+\|`) before consuming the current line into a paragraph, so tables render correctly even with no preceding blank line.
+
+---
+
+## Per-Block Copy Buttons
+
+Every code block and table inside an AI response gets a small **⎘** copy icon on hover (top-right corner of the block):
+
+- **Code blocks** — copies the raw code text (no markdown fences)
+- **Tables** — copies as tab-separated values (TSV), so pasting into Excel/Google Sheets preserves columns
+
+Implemented via `addCopyButtons(container)` in `app.js`, called after every `renderMarkdown()` call (both the main chat bubble and the side Model Responses panel). Wraps each `<pre>` and `<table>` in a `.copyable-block` div with the button; icon fades in on hover via CSS, turns green ✓ for 1.5s after copying.
+
+---
+
+## Export Dropdown — PDF / DOCX / TXT
+
+Every AI message has a **⬇** button in its action bar (next to copy/👍/👎) that opens a dropdown to download that single response as a file:
+
+| Format | How it's built |
+|---|---|
+| **TXT** | Strips markdown syntax (`#`, `**`, `` ` ``, etc.) for clean plain text |
+| **PDF** | `jsPDF` — real structured PDF: sized/colored headings, tables with colored header + zebra rows, code blocks in a gray monospace box, bullet/numbered lists, italic gray blockquotes |
+| **DOCX** | `docx` (JS library) — real Word doc: Heading1-6 styles, real `<table>` with borders, bold/italic/inline-code runs preserved, bullet lists |
+
+**Implementation:** both libraries are vendored locally (`static/js/jspdf.umd.min.js`, `static/js/docx.iife.js`) — no CDN, so they pass the existing CSP (`script-src 'self'`). Both use `simpleMdTokenize(content)` (a standalone block tokenizer mirroring `marked.min.js`'s logic, since the bundled `marked` has no `.lexer()` method) to get structured tokens before building the file.
+
+**PDF text cleaning (`cleanPdfText`):** jsPDF's built-in fonts (helvetica/courier) have no emoji glyphs and can't render LaTeX. Before any text is drawn:
+- Common inline LaTeX (`$\rightarrow$`, `$\sim$`, `\approx`, etc.) → plain-text equivalents (`->`, `~`, `~=`)
+- Remaining `$...$` math delimiters and `\command` sequences stripped
+- Emoji and pictographic Unicode ranges (U+1F000–1FFFF, arrows/dingbats U+2190–2BFF, U+2600–27BF, variation selectors) stripped to avoid garbled boxes
+
+**Table wrapping:** PDF table cells wrap to multiple lines with row height calculated from the tallest cell — no more truncated/cut-off cell content.
+
+**File naming:** `neuconx-response-YYYY-MM-DD-HH-MM-SS.{pdf,docx,txt}`
+
+---
+
+## pdf_creator Skill — Real PDF File Generation
+
+When the **pdf_creator** skill is toggled ON in the sidebar, **every chat response** (not just document-style requests) is additionally rendered to a real `.pdf` file on the backend and attached to the chat message as a downloadable file card with inline preview.
+
+**Theme picker:** toggling the skill on reveals a small theme dropdown next to it — **Clean Pro** (white background, professional) or **NCX Dark** (matches the app's dark cyan theme). Selected theme is sent as `pdf_theme` in the chat payload and stored in `state.pdfTheme`.
+
+**Hybrid PDF engine (`doc_generator.py`):**
+
+| Engine | When used | Notes |
+|---|---|---|
+| **reportlab** | Always available; default for documents with 2+ tables | Pure Python, no system dependencies — guaranteed to work everywhere including Windows |
+| **weasyprint** | `auto` mode, 0-1 tables, only if installed | HTML/CSS → PDF, nicer typography for prose-heavy docs |
+
+`generate_document_pdf(content, output_dir, theme, title, engine='auto')` picks the engine automatically. If weasyprint is requested but not installed, or fails at runtime for any reason (e.g. missing Pango/Cairo on Windows), it silently falls back to reportlab — PDF generation never breaks the chat response.
+
+**Backend flow (`app.py`):**
+1. `pdf_creator_active(skills_active)` — checks if `pdf_creator.md` is in the active skills list
+2. `maybe_generate_pdf(message, final_answer, skills_active, theme)` — if the skill is active, derives a title from the first `#`/`##` heading in the response, then calls `generate_document_pdf()`
+3. Generated files saved to `data/generated/` (gitignored) with server-generated filenames: `neuconx-doc-YYYYMMDD-HHMMSS-<6 hex>.pdf`
+4. Served via `GET /api/generated/<filename>` — strict regex validation (`^neuconx-doc-[\w\-]{1,80}\.pdf$`) prevents path traversal
+5. Response JSON includes `generated_file: {filename, url, size, engine, theme}` (or `null` if the skill is off)
+
+**Frontend:** `buildGeneratedFileCard(file)` renders a card below the AI message — filename, size, theme, a **Download** link, and a **Show preview** toggle that lazy-loads an `<iframe>` pointing at `/api/generated/<filename>`.
+
+**Skill prompt guidance (`skills/pdf_creator.md`):** explicitly tells the AI to structure output exactly as it should appear in the PDF (headings/lists/tables map directly to PDF elements) and **not** to suggest writing a separate Python/fpdf2/reportlab script — NeuConX already converts the response natively, so that suggestion is redundant and produces messy code-dump PDFs.
+
+**New endpoints:**
+- `GET /api/generated/<filename>` — serve a generated PDF (preview/download)
+- `GET /api/pdf-themes` — returns available themes, `weasyprint_available`, `doc_generator_available`
+
+**New dependency:** `reportlab==4.2.5` (required, in `requirements.txt`). `weasyprint` is optional/commented out — install separately if desired (`pip install weasyprint --break-system-packages`), needs system Pango/Cairo libs.
 
 ---
 

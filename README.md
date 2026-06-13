@@ -1,4 +1,8 @@
-# ⬡ NeuConX — Personal AI Platform
+<p align="center">
+  <img src="static/NCXLogo.png" alt="NeuConX logo" width="120">
+</p>
+
+# NeuConX — Personal AI Platform
 
 > **Multiple minds. One truth. Always free.**
 > Locally hosted. No subscriptions. No telemetry. Never tracks you.
@@ -8,7 +12,7 @@
 ![License](https://img.shields.io/badge/License-MIT-blue)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-yellow)
 ![Models](https://img.shields.io/badge/Models-6%2B%20Free%20APIs-orange)
-![Ollama](https://img.shields.io/badge/Ollama-Local%20Models-purple)
+![Local](https://img.shields.io/badge/Ollama%20%2B%20LM%20Studio-Local%2FLAN%20Models-purple)
 
 ---
 
@@ -83,13 +87,14 @@ Open **http://localhost:5050** in your browser.
 
 **Recommended start:** Add Openrouter, and Groq first. It is the fastest, most generous free tier, and takes under 2 minutes to set up.
 
-### Local Models (No API key needed)
+### Local / LAN Models (No API key needed)
 
 | Provider | What it is | Hardware needed |
 |----------|-----------|-----------------|
 | **Ollama** | Runs AI models on your own computer | 8GB RAM minimum (7B models) |
+| **LM Studio** | OpenAI-compatible local server — same machine or another PC on your network | 8GB RAM/VRAM minimum (7B models) |
 
-Configure in **Settings → Local Models**. Hardware requirements are shown in-app before you enable it.
+Configure in **Settings → Local / LAN Models**. Hardware requirements are shown in-app before you enable it. "LAN" means you can point NeuConX at any machine on your network running LM Studio — not just `localhost`.
 
 ---
 
@@ -127,10 +132,10 @@ Disable the merge engine in Settings → Engine. The judge reads all responses a
 ### Model Priority Order
 
 ```
-OpenRouter -> Groq → Cerebras → Gemini → NVIDIA → OpenRouter → Ollama
+Groq → Cerebras → OpenRouter (3 slots) → Gemini → NVIDIA → Ollama / LM Studio
 ```
 
-Groq and Cerebras run first — most generous free tiers. Gemini's 1,500/day cap is preserved for actual queries.
+Groq and Cerebras run first — most generous free tiers. OpenRouter fills 3 model slots (variety, no daily cap) before Gemini's 1,500/day cap is touched. NVIDIA and any configured local/LAN model round out Tier 3.
 
 ### Dynamic Token Budget
 
@@ -169,12 +174,15 @@ Tokens are allocated per query based on what is being asked:
 | Quota exhaustion routing | Auto-skips exhausted models silently |
 | Markdown rendering | Full markdown in chat bubbles and right panel |
 | Large model warnings | Alerts when pinning 70B+ models on free tier |
+| Per-block copy buttons | Hover any code block or table to copy (tables copy as TSV) |
+| Export dropdown | Download any AI response as PDF, DOCX, or TXT |
+| pdf_creator skill | Every response also generated as a themed PDF with inline preview |
 
 ### Settings (4-tab modal)
 | Tab | What is there |
 |-----|--------------|
 | **API Providers** | Key input per provider, Validate button, live model count badge, model list tooltip |
-| **Local Models** | Ollama URL + model, hardware requirements table, Test Connection button |
+| **Local / LAN Models** | Ollama or LM Studio URL + model, hardware requirements table, Test Connection + Save buttons |
 | **Engine** | Free Models Only, Merge Engine toggle, AI Judge provider + model selector |
 | **Reset** | Individual resets for onboarding, memory, conversations, profile, keys, factory reset |
 
@@ -216,7 +224,7 @@ Tokens are allocated per query based on what is being asked:
 |-------|----------|-------------|
 | humanizer | writing | Removes AI writing patterns — targets perplexity, burstiness, surface tells |
 | code_reviewer | coding | Security, bugs, and performance analysis |
-| pdf_creator | writing | Structures output as professional documents |
+| pdf_creator | writing | Structures output as professional documents AND generates a real downloadable `.pdf` for every response (theme: Clean Pro / NCX Dark) |
 | researcher | research | Enforces Overview → Findings → Analysis → Conclusion |
 | data_analyst | analysis | Enforces Observation → Interpretation → Recommendation |
 
@@ -237,7 +245,9 @@ When merge engine is OFF — picks the single best response verbatim. Configure 
 
 ---
 
-## Ollama Setup
+## Local / LAN Model Setup
+
+### Option A — Ollama (same machine)
 
 ```bash
 # 1. Install Ollama
@@ -254,8 +264,21 @@ ollama pull qwen2.5         # 4.7GB, strong multilingual
 ollama serve
 
 # 4. Configure in NeuConX
-# Settings → Local Models → enter URL and model name → Test Connection
+# Settings → Local / LAN Models → URL: http://localhost:11434, model: llama3.2 → Test Connection → Save
 ```
+
+### Option B — LM Studio (same machine, or another PC on your network)
+
+1. Open LM Studio → **Local Server** tab → load any model
+2. Enable **"Load models on demand"** in server settings — this lets NeuConX request any model in your LM Studio library, not just the one currently loaded
+3. Note the address shown (e.g. `http://192.168.1.42:1234`)
+4. Visit `http://<that-address>/v1/models` in a browser and copy the exact `id` string of the model you want
+5. In NeuConX: Settings → Local / LAN Models → paste the URL (no `/v1` needed) and the exact model `id` → Test Connection → Save
+
+**Notes:**
+- LM Studio's model list shows everything downloaded, but only the model loaded in the inference slot responds — "Load models on demand" removes this restriction
+- A 400 error almost always means the model `id` doesn't match exactly — copy it from `/v1/models`, don't retype
+- First request after switching models can take 1-3 minutes (cold load into VRAM/RAM) — warm it up with a message in LM Studio's own chat first
 
 Hardware guide (shown in-app):
 
@@ -291,7 +314,8 @@ The embedding model (`all-MiniLM-L6-v2`, 80MB) downloads on first use and runs f
 
 ```
 neuconx/
-├── app.py                    # Flask backend (~2,600 lines)
+├── app.py                    # Flask backend (~2,900 lines)
+├── doc_generator.py          # PDF generation (reportlab + optional weasyprint)
 ├── requirements.txt          # All Python dependencies with comments
 ├── install.bat               # Windows one-time installer (guided wizard)
 ├── install.sh                # Mac/Linux one-time installer (guided wizard)
@@ -310,8 +334,10 @@ neuconx/
 ├── static/
 │   ├── css/style.css         # Dark cinematic theme
 │   └── js/
-│       ├── app.js            # Frontend logic (~1,900 lines)
-│       └── marked.min.js     # Bundled markdown parser (no CDN dependency)
+│       ├── app.js            # Frontend logic
+│       ├── marked.min.js     # Bundled markdown parser (no CDN dependency)
+│       ├── jspdf.umd.min.js  # Bundled PDF export library (no CDN dependency)
+│       └── docx.iife.js      # Bundled DOCX export library (no CDN dependency)
 ├── skills/                   # Skill .md files
 │   ├── humanizer.md
 │   ├── code_reviewer.md
@@ -322,6 +348,7 @@ neuconx/
     ├── profile.json          # Onboarding answers + learned facts
     ├── neuconx_settings.json # Engine settings (merge, judge, free-only)
     ├── conversations/        # One JSON file per conversation
+    ├── generated/             # PDFs generated by the pdf_creator skill
     └── memory/               # ChromaDB vector store (if enabled)
 ```
 
@@ -360,6 +387,8 @@ neuconx/
 | POST | `/api/reset/profile` | Reset learned profile |
 | POST | `/api/reset/keys` | Wipe API keys |
 | POST | `/api/reset/factory` | Full factory reset (two confirmations) |
+| GET | `/api/generated/:filename` | Serve a PDF generated by the pdf_creator skill |
+| GET | `/api/pdf-themes` | List PDF themes + weasyprint/doc_generator availability |
 | GET | `/how_it_works.html` | Visual flowchart page |
 
 ---
@@ -376,6 +405,8 @@ neuconx/
 | 6 | Memory confirmation UI, learned fact approval cards |
 | 7 | Profile viewer, auto-update from conversation, per-fact delete |
 | Post-V0.0 | Model pin selector, live model listing, AI Judge mode, Ollama support, 4-tab settings modal, Free Models Only toggle, API key validation with model count, markdown rendering, dynamic token budget (8,192 for complex queries), large model warnings, install.bat + install.sh guided wizards, start.sh for Mac/Linux |
+| Post-V0.0.1 | LM Studio support alongside Ollama (Local / LAN Models), NCX logo branding across UI, parallel-collector timeout fix (35s → 130s) so local/LAN models are reliably included in the merge engine, Save button for local model settings |
+| Post-V0.0.2 | Per-block copy buttons (code blocks + tables), export dropdown (PDF/DOCX/TXT) for any AI response via vendored jsPDF/docx libraries, pdf_creator skill now generates a real themed PDF (NCX Dark / Clean Pro) with inline preview for every response via hybrid reportlab/weasyprint engine, fixed a shared markdown tokenizer bug where tables immediately following a text line (no blank line) were swallowed as raw paragraph text |
 
 ---
 

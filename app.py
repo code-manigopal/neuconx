@@ -73,10 +73,11 @@ BASE_DIR   = Path(__file__).parent
 SKILLS_DIR = BASE_DIR / 'skills'
 DATA_DIR   = BASE_DIR / 'data'
 CONV_DIR   = DATA_DIR / 'conversations'
+GENERATED_DIR = DATA_DIR / 'generated'
 PROFILE_FILE = DATA_DIR / 'profile.json'
 ENV_PATH   = BASE_DIR / '.env'
 
-for d in [SKILLS_DIR, CONV_DIR, DATA_DIR]:
+for d in [SKILLS_DIR, CONV_DIR, DATA_DIR, GENERATED_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 # ── API Keys (reloaded on each request via helper) ─────────────────────────────
@@ -137,6 +138,16 @@ def add_security_headers(response):
 
 
 app.after_request(add_security_headers)
+
+# ── Document Generator (Feature: pdf_creator skill -> real PDF files) ─────────
+DOC_GENERATOR_AVAILABLE = False
+try:
+    from doc_generator import generate_document_pdf, THEMES as PDF_THEMES, WEASYPRINT_AVAILABLE
+    DOC_GENERATOR_AVAILABLE = True
+except Exception as e:
+    logger.warning(f"doc_generator unavailable — PDF file generation disabled: {type(e).__name__}: {str(e)[:120]}")
+    PDF_THEMES = {'professional': {'name': 'Clean Professional'}, 'ncx': {'name': 'NCX Dark'}}
+    WEASYPRINT_AVAILABLE = False
 
 # ── CSRF helper ────────────────────────────────────────────────────────────────
 def csrf_valid():
@@ -859,6 +870,77 @@ def get_csrf_token():
     return jsonify({'token': session['csrf_token']})
 
 
+# ── Feature: pdf_creator skill -> real PDF file generation ────────────────────
+
+def pdf_creator_active(skills_active) -> bool:
+    if not isinstance(skills_active, list):
+        return False
+    return any(sanitize_filename(str(s)) == 'pdf_creator.md' for s in skills_active[:5])
+
+
+def maybe_generate_pdf(message: str, final_answer: str, skills_active, theme: str = 'professional') -> dict:
+    """If the pdf_creator skill is active, render final_answer to a themed
+    PDF and return file info for the response JSON — every message while
+    the skill is on gets a PDF. Returns None if the skill is off or
+    generation failed. Never raises — PDF generation failure must not
+    break the chat response."""
+    if not DOC_GENERATOR_AVAILABLE:
+        return None
+    if not pdf_creator_active(skills_active):
+        return None
+    try:
+        # Try to derive a title from the first heading in the response
+        title = None
+        for line in (final_answer or '').split('\n')[:5]:
+            hm = re.match(r'^#{1,2}\s+(.+)$', line.strip())
+            if hm:
+                title = sanitize_input(hm.group(1), 150)
+                break
+
+        result = generate_document_pdf(
+            content=final_answer,
+            output_dir=GENERATED_DIR,
+            theme=theme if theme in PDF_THEMES else 'professional',
+            title=title,
+            engine='auto',
+        )
+        return {
+            'filename':    result['filename'],
+            'url':         f"/api/generated/{result['filename']}",
+            'size':        result['size'],
+            'engine':      result['engine_used'],
+            'theme':       result['theme'],
+        }
+    except Exception as e:
+        logger.error(f"PDF generation failed: {type(e).__name__}: {str(e)[:150]}")
+        return None
+
+
+@app.route('/api/generated/<filename>', methods=['GET'])
+@limiter.limit("30 per minute")
+def get_generated_file(filename):
+    """Serve a generated PDF for inline preview / download.
+    Filenames are server-generated (uuid-based) — strict pattern match
+    prevents path traversal."""
+    if not re.match(r'^neuconx-doc-[\w\-]{1,80}\.pdf$', filename):
+        abort(400)
+    file_path = GENERATED_DIR / filename
+    if not file_path.exists():
+        abort(404)
+    return send_from_directory(str(GENERATED_DIR), filename, mimetype='application/pdf')
+
+
+@app.route('/api/pdf-themes', methods=['GET'])
+@limiter.limit("20 per minute")
+def get_pdf_themes():
+    """Return available PDF themes for the export/generation theme picker."""
+    return jsonify({
+        'themes': {k: {'name': v['name']} for k, v in PDF_THEMES.items()},
+        'weasyprint_available': WEASYPRINT_AVAILABLE,
+        'doc_generator_available': DOC_GENERATOR_AVAILABLE,
+    })
+
+
 @app.route('/api/chat', methods=['POST'])
 @limiter.limit("30 per minute")
 def chat():
@@ -1113,6 +1195,10 @@ def chat():
             embed_message('assistant', final, sess_id, datetime.now().isoformat())
         extract_memory_candidates(message, final, sess_id)
 
+        skills_active_pin = data.get('skills_active', [])
+        pdf_theme = sanitize_input(str(data.get('pdf_theme', 'professional')), 20)
+        generated_file = maybe_generate_pdf(message, final, skills_active_pin, pdf_theme)
+
         return jsonify({
             'final_answer':    final,
             'model_responses': [result],
@@ -1120,7 +1206,8 @@ def chat():
             'models_used':     1 if result.get('response') else 0,
             'models_called':   [pinned_model_id],
             'personalized':    personalized_pin,
-            'humanized':       False
+            'humanized':       False,
+            'generated_file':  generated_file
         })
 
     else:
@@ -1315,6 +1402,9 @@ def chat():
     # Phase 6: Extract memory candidates from this exchange
     extract_memory_candidates(message, final, sess_id)
 
+    pdf_theme = sanitize_input(str(data.get('pdf_theme', 'professional')), 20)
+    generated_file = maybe_generate_pdf(message, final, skills_active, pdf_theme)
+
     return jsonify({
         'final_answer':    final,
         'model_responses': [
@@ -1325,7 +1415,8 @@ def chat():
         'models_used':  len([r for r in responses if r.get('response')]),
         'models_called': models_to_call,
         'personalized':  personalized,
-        'humanized':     humanized
+        'humanized':     humanized,
+        'generated_file': generated_file
     })
 
 
